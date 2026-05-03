@@ -1,0 +1,2054 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>校務用 PDF Editor</title>
+  
+  <!-- 完全オフライン動作のためのローカル読み込み設定（プレビュー環境自動判別） -->
+  <script>
+    var isPreview = window.location.protocol === 'blob:' || window.location.hostname.includes('usercontent.goog');
+    var tailwindSrc = isPreview ? "https://cdn.tailwindcss.com" : "./tailwindcss.js";
+    var pdflibSrc = isPreview ? "https://unpkg.com/pdf-lib/dist/pdf-lib.min.js" : "./pdf-lib.min.js";
+    var pdfjsSrc = isPreview ? "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" : "./pdf.min.js";
+    var workerSrc = isPreview ? "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js" : "./pdf.worker.min.js";
+
+    document.write('<script src="' + tailwindSrc + '"><\/script>');
+    document.write('<script src="' + pdflibSrc + '"><\/script>');
+    document.write('<script src="' + pdfjsSrc + '"><\/script>');
+  </script>
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      if (typeof pdfjsLib !== 'undefined') {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+      }
+    });
+  </script>
+
+  <style>
+    body { overflow: hidden; position: fixed; width: 100%; height: 100%; touch-action: none; user-select: none; margin: 0; padding: 0; transition: background-color 0.3s ease; }
+    body.theme-extract { background-color: #e0f2fe; }
+    body.theme-merge { background-color: #dcfce7; }
+    body.theme-edit { background-color: #f3e8ff; }
+
+    ::-webkit-scrollbar { width: 0.6cqw; height: 0.6cqw; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 1cqw; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+    input, textarea, select { outline: none; border: 1px solid #d1d5db; user-select: auto; -webkit-user-select: auto; }
+    
+    .fade-in { animation: fadeIn 0.2s ease-in-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(0.5cqw); } to { opacity: 1; transform: translateY(0); } }
+
+    .thumb-card.selected { border: 0.3cqw solid #3b82f6; background-color: #eff6ff; }
+    .thumb-card { border: 0.3cqw solid transparent; cursor: pointer; transition: all 0.1s; }
+    .thumb-card:hover { transform: scale(1.02); }
+
+    .draggable-item {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      cursor: grab;
+      border: 1px dashed transparent;
+      transition: box-shadow 0.2s;
+    }
+    .draggable-item:hover { background: rgba(59, 130, 246, 0.1); }
+    .draggable-item:active { cursor: grabbing; border-style: solid; border-color: #3b82f6; }
+
+    input[type=range] { width: 100%; height: 0.4cqw; background: #e5e7eb; border-radius: 1cqw; appearance: none; }
+    input[type=range]::-webkit-slider-thumb { appearance: none; width: 1.2cqw; height: 1.2cqw; background: #3b82f6; border-radius: 50%; cursor: pointer; }
+    input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+    .drag-over { border-top: 2px solid #3b82f6; }
+  </style>
+</head>
+<body class="theme-extract" id="app-body">
+  
+  <div class="w-screen h-[100dvh] flex items-center justify-center overflow-hidden">
+    <div id="app-container" class="relative flex flex-col bg-gray-100 shadow-2xl overflow-hidden rounded-xl"
+         style="aspect-ratio: 16 / 10; width: 100%; max-width: calc(100dvh * (16 / 10)); max-height: 100dvh; container-type: size;">
+      
+      <header id="app-header" class="bg-blue-600 text-white flex items-center justify-between flex-shrink-0 transition-colors duration-300" style="padding: 1cqw 2cqw; height: 8cqh;">
+        <div class="flex items-center gap-2">
+          <h1 style="font-size: 2.2cqw; font-weight: bold; line-height: 1.2; word-break: keep-all;">
+            <span style="margin-right: 0.5cqw;">📄</span>校務用 PDF Editor
+          </h1>
+        </div>
+        <div class="flex items-center" style="gap: 1cqw;">
+          <div class="flex bg-black/20 p-1 rounded-lg" style="gap: 0.5cqw; padding: 0.3cqw;">
+            <button class="tab-btn bg-white text-blue-600 font-bold shadow-sm rounded-md transition" data-tab="extract" data-theme="theme-extract" data-color="bg-blue-600" style="padding: 0.5cqw 1.5cqw; font-size: 1.3cqw;">📄 抽出</button>
+            <button class="tab-btn text-white/80 hover:text-white rounded-md transition" data-tab="merge" data-theme="theme-merge" data-color="bg-green-600" style="padding: 0.5cqw 1.5cqw; font-size: 1.3cqw;">🔗 結合</button>
+            <button class="tab-btn text-white/80 hover:text-white rounded-md transition" data-tab="edit" data-theme="theme-edit" data-color="bg-purple-600" style="padding: 0.5cqw 1.5cqw; font-size: 1.3cqw;">✍️ 装飾・マスク</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="flex flex-1 overflow-hidden" style="padding: 1cqw; gap: 1cqw;">
+        
+        <!-- 左サイド：ファイル管理 -->
+        <aside class="flex flex-col bg-white border border-gray-200 shadow-sm" style="width: 22cqw; border-radius: 1cqw; padding: 1cqw;">
+          
+          <!-- 常に表示される共通ファイル操作メニュー -->
+          <div class="flex flex-col shrink-0">
+            <div class="flex" style="gap: 0.5cqw; margin-bottom: 0.8cqw;">
+              <button onclick="saveProject()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 transition" style="padding: 0.5cqw; border-radius: 0.5cqw; font-size: 1.1cqw; font-weight: bold;">
+                💾 保存
+              </button>
+              <label class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 transition flex items-center justify-center cursor-pointer" style="padding: 0.5cqw; border-radius: 0.5cqw; font-size: 1.1cqw; font-weight: bold;">
+                📂 開く
+                <input type="file" id="project-input" accept=".json" class="hidden">
+              </label>
+            </div>
+
+            <button onclick="confirmClearAllData()" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 transition flex items-center justify-center cursor-pointer shadow-sm mb-3" style="padding: 0.6cqw; border-radius: 0.5cqw; font-size: 1.1cqw; font-weight: bold;">
+              🗑️ すべてのデータをクリア
+            </button>
+
+            <label class="bg-blue-100 text-blue-700 hover:bg-blue-200 flex items-center justify-center cursor-pointer transition shadow-sm mb-2" 
+                   style="padding: 0.8cqw; border-radius: 0.5cqw; font-size: 1.3cqw; font-weight: bold;">
+              <span style="margin-right: 0.5cqw;">➕</span> PDFを追加
+              <input type="file" id="file-input" multiple accept=".pdf" class="hidden">
+            </label>
+          </div>
+            
+          <!-- ファイルリスト（常に表示） -->
+          <div id="file-list" class="flex-1 overflow-y-auto flex flex-col mt-1" style="gap: 0.5cqw; padding-right: 0.5cqw;">
+            <div class="text-gray-400 text-center h-full flex items-center justify-center" style="font-size: 1.2cqw;">ファイルがありません</div>
+          </div>
+        </aside>
+
+        <!-- 中央：プレビューエリア -->
+        <section class="flex-1 flex flex-col bg-gray-200 border border-gray-300 shadow-inner overflow-hidden relative" style="border-radius: 1cqw;">
+          <div class="absolute top-0 left-0 w-full bg-black/60 text-white flex justify-between items-center z-20 backdrop-blur-sm" style="padding: 0.5cqw 1cqw; gap: 1cqw;">
+            <div id="preview-title" class="truncate flex-1" style="font-size: 1.2cqw; font-weight:bold;" title="プレビュー">プレビュー</div>
+            <div class="flex items-center flex-shrink-0" style="gap: 1cqw;">
+              <div id="zoom-controls" class="hidden flex items-center bg-black/40 rounded-full" style="padding: 0.3cqw 1cqw; gap: 1cqw; font-size: 1.1cqw;">
+                <button onclick="setZoom(-0.2)" class="hover:text-blue-300">🔍-</button>
+                <span id="zoom-text" class="w-[4cqw] text-center">100%</span>
+                <button onclick="setZoom(0.2)" class="hover:text-blue-300">🔍+</button>
+                <button onclick="setZoom(0, true)" class="hover:text-blue-300 text-[1cqw] bg-white/20 px-2 rounded-full">リセット</button>
+              </div>
+              <div id="preview-pagination" class="hidden flex items-center" style="gap: 1cqw; font-size: 1.2cqw;">
+                <button onclick="changePreviewPage(-1)" class="hover:text-blue-300">◀</button>
+                <span id="preview-page-text">1 / 1</span>
+                <button onclick="changePreviewPage(1)" class="hover:text-blue-300">▶</button>
+              </div>
+            </div>
+          </div>
+          
+          <div id="preview-grid" class="flex-1 overflow-y-auto grid grid-cols-3 auto-rows-max p-4 hidden" style="gap: 1cqw; padding: 4cqw 1cqw 1cqw 1cqw;"></div>
+          
+          <div id="preview-single" class="flex-1 overflow-auto relative hidden cursor-grab active:cursor-grabbing" style="padding: 4cqw 1cqw 1cqw 1cqw; background: #d1d5db;">
+            <div id="zoom-wrapper" class="relative mx-auto transition-all duration-200 mt-2" style="width: 100%; height: 100%;">
+              <div id="preview-canvas-container" class="absolute top-0 left-0 bg-white shadow-md transition-transform duration-200" style="transform-origin: top left; transform: scale(1);">
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 右サイド：操作パネル -->
+        <aside class="flex flex-col bg-white border border-gray-200 shadow-sm overflow-hidden" style="width: 30cqw; border-radius: 1cqw;">
+          <div id="panel-content" class="flex-1 overflow-y-auto flex flex-col" style="padding: 1.2cqw;">
+            
+            <div id="panel-extract" class="flex flex-col h-full" style="gap: 1cqw;">
+              <h3 style="font-size: 1.5cqw; font-weight: bold; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.5cqw;">📄 抽出・再構成</h3>
+              <div class="text-gray-600" style="font-size: 1.1cqw; line-height: 1.3;">
+                複数PDFを横断して抽出可能です。リストの項目をタップして「選択」してから仕切りを追加すると、その直前に挿入されます。
+              </div>
+              
+              <div class="flex gap-1 shrink-0 mt-1">
+                <button onclick="extractSelectAll()" class="flex-1 bg-white border border-gray-300 hover:bg-gray-100 rounded text-[1cqw] py-1 font-bold shadow-sm">全選択(現PDF)</button>
+                <button onclick="extractClearAll()" class="flex-1 bg-white border border-gray-300 hover:bg-gray-100 rounded text-[1cqw] py-1 font-bold shadow-sm">全解除(現PDF)</button>
+                <button onclick="openBlankPageModal('extract')" class="flex-1 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 rounded text-[1cqw] py-1 font-bold shadow-sm">➕ 仕切り</button>
+              </div>
+              
+              <div id="extract-list-ui" class="flex-1 overflow-y-auto flex flex-col gap-1 p-1 bg-gray-50 border border-gray-200 rounded-md min-h-[15cqh]"></div>
+              
+              <button onclick="executeExtract()" class="bg-blue-600 text-white hover:bg-blue-700 shadow-md transition w-full font-bold py-[1cqw] rounded-md text-[1.4cqw] shrink-0 mt-1">✂️ 抽出リストでPDF化</button>
+            </div>
+
+            <div id="panel-merge" class="flex flex-col hidden h-full" style="gap: 1cqw;">
+              <div class="flex justify-between items-end border-b-2 border-gray-200 pb-1 shrink-0">
+                <h3 style="font-size: 1.5cqw; font-weight: bold;">🔗 結合順序</h3>
+                <button onclick="openBlankPageModal('merge')" class="bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded p-1 text-[1cqw] font-bold shadow-sm">➕ 仕切り</button>
+              </div>
+              <div class="text-gray-600" style="font-size: 1.1cqw;">リストの矢印で順序を入れ替えます。</div>
+              <div id="merge-list" class="flex-1 overflow-y-auto flex flex-col p-1 border rounded-md bg-gray-50 gap-1"></div>
+              <button onclick="executeMerge()" class="bg-green-600 text-white hover:bg-green-700 shadow-md transition w-full font-bold py-[1cqw] rounded-md text-[1.4cqw]">🔗 結合してPDF化</button>
+            </div>
+
+            <div id="panel-edit" class="flex flex-col hidden h-full" style="gap: 1cqw;">
+              <div class="flex justify-between items-center border-b-2 border-gray-200 pb-1 mb-2 shrink-0">
+                <h3 style="font-size: 1.5cqw; font-weight: bold;">📚 プロパティ＆レイヤー</h3>
+                <div class="flex gap-1">
+                  <button id="btn-undo" onclick="undo()" class="bg-white border border-gray-300 hover:bg-gray-100 px-2 py-0.5 rounded text-[1cqw] text-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition" title="戻る (Ctrl+Z)">↩️</button>
+                  <button id="btn-redo" onclick="redo()" class="bg-white border border-gray-300 hover:bg-gray-100 px-2 py-0.5 rounded text-[1cqw] text-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition" title="やり直す (Ctrl+Y)">↪️</button>
+                </div>
+              </div>
+
+              <!-- 統合レイヤーリスト -->
+              <div id="items-list-ui" class="flex-1 overflow-y-auto flex flex-col gap-2 p-1 min-h-[20cqh]"></div>
+              <div id="items-empty-msg" class="text-gray-400 text-center text-[1.1cqw] py-10 hidden flex-1 flex flex-col items-center justify-center gap-2">
+                <span class="text-[3cqw]">👈</span>
+                左側のツールボックスから<br>アイテムを追加してください
+              </div>
+
+              <!-- 出力設定 -->
+              <div class="bg-gray-50 p-2 rounded-lg border border-gray-200 flex flex-col gap-1 mt-1 shrink-0">
+                <span class="font-bold text-[1.1cqw] text-gray-700">⚙️ 出力モード設定</span>
+                <select id="edit-draw-mode" onchange="updateDrawMode(this.value)" class="border bg-white rounded p-1 text-[1cqw]">
+                  <option value="standard">標準モード (推奨: ズレが少ない)</option>
+                  <option value="master">マスター基準 (サイズ混在PDF用)</option>
+                </select>
+                <div class="text-[0.85cqw] text-gray-500 leading-tight">※保存結果がずれる場合は、別のモードをお試しください。</div>
+              </div>
+
+              <button onclick="executeEdit()" class="bg-purple-600 text-white hover:bg-purple-700 shadow-md transition w-full font-bold py-[1cqw] rounded-md text-[1.4cqw] mt-1 shrink-0">装飾してPDF化</button>
+            </div>
+
+          </div>
+        </aside>
+      </main>
+
+      <!-- フローティング・装飾ツールボックス -->
+      <div id="floating-toolbox" class="absolute bg-white/95 border-2 border-purple-300 shadow-2xl rounded-xl z-40 hidden flex-col w-[22cqw]" style="bottom: 2cqw; left: 2cqw; top: auto; right: auto; backdrop-filter: blur(4px);">
+        <div id="floating-toolbox-header" class="text-purple-800 px-2 py-1.5 rounded-t-xl text-[1.1cqw] font-bold flex justify-between items-center cursor-move select-none bg-purple-50 border-b border-purple-200">
+          <span class="flex items-center gap-1">🛠️ 装飾ツールボックス</span>
+          <span class="text-purple-400 text-[1.2cqw] cursor-move">✥</span>
+        </div>
+        <div class="p-1.5 flex flex-col gap-1.5">
+          <div class="flex gap-1 shrink-0">
+            <button onclick="rotatePage(-90)" class="flex-1 bg-white hover:bg-gray-100 border border-gray-300 rounded p-1 text-[0.9cqw] font-bold flex items-center justify-center gap-1 transition shadow-sm"><span class="text-blue-600 text-[1.2cqw]">↶</span>左回転</button>
+            <button onclick="rotatePage(90)" class="flex-1 bg-white hover:bg-gray-100 border border-gray-300 rounded p-1 text-[0.9cqw] font-bold flex items-center justify-center gap-1 transition shadow-sm">右回転<span class="text-blue-600 text-[1.2cqw]">↷</span></button>
+          </div>
+          <div class="grid grid-cols-2 gap-1 shrink-0">
+            <button onclick="addItem('pagenum')" class="bg-white text-blue-700 hover:bg-blue-50 border border-blue-200 rounded p-1 text-[0.9cqw] font-bold shadow-sm flex flex-col items-center justify-center transition"><span class="text-[1.4cqw] mb-0.5">🔢</span>ページ番号</button>
+            <button onclick="addItem('text')" class="bg-white text-indigo-700 hover:bg-indigo-50 border border-indigo-200 rounded p-1 text-[0.9cqw] font-bold shadow-sm flex flex-col items-center justify-center transition"><span class="text-[1.4cqw] mb-0.5">📝</span>テキスト</button>
+            <button onclick="addItem('image')" class="bg-white text-pink-700 hover:bg-pink-50 border border-pink-200 rounded p-1 text-[0.9cqw] font-bold shadow-sm flex flex-col items-center justify-center transition"><span class="text-[1.4cqw] mb-0.5">🖼️</span>画像挿入</button>
+            <button onclick="addItem('mask')" class="bg-white text-gray-700 hover:bg-gray-100 border border-gray-300 rounded p-1 text-[0.9cqw] font-bold shadow-sm flex flex-col items-center justify-center transition"><span class="text-[1.4cqw] mb-0.5">🧽</span>マスク(隠す)</button>
+            <button onclick="addItem('rect')" class="bg-white text-amber-700 hover:bg-amber-50 border border-amber-200 rounded p-1 text-[0.9cqw] font-bold shadow-sm flex flex-col items-center justify-center transition"><span class="text-[1.4cqw] mb-0.5">🔲</span>四角(枠)</button>
+            <button onclick="addItem('circle')" class="bg-white text-amber-700 hover:bg-amber-50 border border-amber-200 rounded p-1 text-[0.9cqw] font-bold shadow-sm flex flex-col items-center justify-center transition"><span class="text-[1.4cqw] mb-0.5">⭕</span>丸(枠)</button>
+            <button onclick="addItem('watermark')" class="bg-white text-teal-700 hover:bg-teal-50 border border-teal-200 rounded p-1 text-[0.9cqw] font-bold shadow-sm flex flex-col items-center justify-center transition col-span-2"><span class="text-[1.4cqw] mb-0.5">🔏</span>透かし</button>
+          </div>
+          <div class="text-[0.8cqw] text-gray-500 bg-gray-50 p-1 rounded border border-gray-200 text-center leading-tight">
+            ツールを選ぶと配置されます。右パネルで詳細調整できます。
+          </div>
+        </div>
+      </div>
+
+      <!-- フッター -->
+      <footer class="bg-gray-200 text-gray-500 flex items-center justify-center shrink-0 w-full" style="height: 10px; font-size: 8px;">
+        2026 ココサポートワークス
+      </footer>
+
+      <!-- オーバーレイ要素 -->
+      <div id="loading-overlay" class="absolute inset-0 bg-white/90 flex flex-col items-center justify-center z-50 hidden">
+        <span class="animate-spin inline-block" style="font-size: 4cqw;">⏳</span>
+        <div id="loading-text" style="font-size: 1.5cqw; font-weight: bold; margin-top: 1cqw; color: #2563eb;">処理中...</div>
+      </div>
+      
+      <!-- メッセージモーダル -->
+      <div id="custom-modal" class="absolute inset-0 bg-black/60 flex items-center justify-center z-50 hidden" style="backdrop-filter: blur(2px);">
+        <div class="bg-white flex flex-col items-center shadow-2xl fade-in" style="padding: 2cqw; border-radius: 1cqw; max-width: 40cqw;">
+          <div id="modal-icon" style="font-size: 3cqw; margin-bottom: 1cqw;"></div>
+          <h2 id="modal-title" style="font-size: 2cqw; font-weight: bold; margin-bottom: 1cqw; text-align: center;"></h2>
+          <p id="modal-message" style="font-size: 1.4cqw; margin-bottom: 2cqw; text-align: center; line-height: 1.4; color: #4b5563;"></p>
+          <button onclick="closeModal()" class="bg-gray-800 text-white hover:bg-gray-900 transition px-6 py-2 rounded" style="font-size: 1.4cqw; font-weight: bold;">閉じる</button>
+        </div>
+      </div>
+
+      <!-- プロンプトモーダル -->
+      <div id="prompt-modal" class="absolute inset-0 bg-black/60 flex items-center justify-center z-50 hidden" style="backdrop-filter: blur(2px);">
+        <div class="bg-white flex flex-col shadow-2xl fade-in" style="padding: 2cqw; border-radius: 1cqw; max-width: 40cqw; width: 30cqw;">
+          <h2 id="prompt-title" style="font-size: 1.6cqw; font-weight: bold; margin-bottom: 1cqw; color: #1f2937;">ファイル名を入力</h2>
+          <input type="text" id="prompt-input" class="border border-gray-300 p-2 rounded mb-3 text-[1.2cqw] w-full focus:ring-2 focus:ring-blue-500 focus:outline-none">
+          <div class="flex justify-end gap-2">
+            <button onclick="closePrompt()" class="bg-gray-200 text-gray-800 hover:bg-gray-300 transition px-4 py-2 rounded text-[1.2cqw] font-bold">キャンセル</button>
+            <button id="prompt-ok-btn" class="bg-blue-600 text-white hover:bg-blue-700 transition px-4 py-2 rounded text-[1.2cqw] font-bold">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 仕切りページ追加用モーダル -->
+      <div id="blank-page-modal" class="absolute inset-0 bg-black/60 flex items-center justify-center z-50 hidden" style="backdrop-filter: blur(2px);">
+        <div class="bg-white flex flex-col shadow-2xl fade-in" style="padding: 2cqw; border-radius: 1cqw; max-width: 40cqw; width: 30cqw;">
+          <h2 style="font-size: 1.6cqw; font-weight: bold; margin-bottom: 1cqw; color: #1f2937;">📄 仕切りページの追加</h2>
+          
+          <div class="flex flex-col gap-3 mb-4 text-[1.1cqw]">
+            <div>
+              <label class="font-bold text-gray-700 block mb-1">用紙サイズと向き</label>
+              <select id="blank-size" class="border border-gray-300 p-2 rounded w-full focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                <option value="a4-p">A4 (縦)</option>
+                <option value="a4-l">A4 (横)</option>
+                <option value="b5-p">B5 (縦)</option>
+                <option value="b5-l">B5 (横)</option>
+              </select>
+            </div>
+            <div>
+              <label class="font-bold text-gray-700 block mb-1">背景色</label>
+              <div class="grid grid-cols-5 gap-2">
+                <button onclick="selectBlankColor(this, '#ffffff')" class="color-btn w-full h-8 rounded border-2 border-blue-500 shadow-sm" style="background-color: #ffffff;"></button>
+                <button onclick="selectBlankColor(this, '#e0f2fe')" class="color-btn w-full h-8 rounded border border-gray-300 shadow-sm" style="background-color: #e0f2fe;"></button>
+                <button onclick="selectBlankColor(this, '#fce7f3')" class="color-btn w-full h-8 rounded border border-gray-300 shadow-sm" style="background-color: #fce7f3;"></button>
+                <button onclick="selectBlankColor(this, '#fef08a')" class="color-btn w-full h-8 rounded border border-gray-300 shadow-sm" style="background-color: #fef08a;"></button>
+                <button onclick="selectBlankColor(this, '#dcfce7')" class="color-btn w-full h-8 rounded border border-gray-300 shadow-sm" style="background-color: #dcfce7;"></button>
+              </div>
+              <input type="hidden" id="blank-color" value="#ffffff">
+            </div>
+          </div>
+          
+          <div class="flex justify-end gap-2">
+            <button onclick="closeBlankPageModal()" class="bg-gray-200 text-gray-800 hover:bg-gray-300 transition px-4 py-2 rounded text-[1.2cqw] font-bold">キャンセル</button>
+            <button onclick="executeAddBlankPage()" class="bg-blue-600 text-white hover:bg-blue-700 transition px-4 py-2 rounded text-[1.2cqw] font-bold">追加する</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 全クリア確認モーダル -->
+      <div id="clear-confirm-modal" class="absolute inset-0 bg-black/60 flex items-center justify-center z-50 hidden" style="backdrop-filter: blur(2px);">
+        <div class="bg-white flex flex-col shadow-2xl fade-in" style="padding: 2cqw; border-radius: 1cqw; max-width: 40cqw; width: 30cqw;">
+          <h2 style="font-size: 1.6cqw; font-weight: bold; margin-bottom: 1cqw; color: #dc2626;">⚠️ 確認</h2>
+          <p class="text-[1.2cqw] mb-4">すべての作業データを消去して、最初からやり直しますか？この操作は元に戻せません。</p>
+          <div class="flex justify-end gap-2">
+            <button onclick="document.getElementById('clear-confirm-modal').classList.add('hidden')" class="bg-gray-200 text-gray-800 hover:bg-gray-300 transition px-4 py-2 rounded text-[1.2cqw] font-bold">キャンセル</button>
+            <button onclick="executeClearAllData()" class="bg-red-600 text-white hover:bg-red-700 transition px-4 py-2 rounded text-[1.2cqw] font-bold">すべて消去</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- モード切り替え確認モーダル -->
+      <div id="switch-mode-confirm-modal" class="absolute inset-0 bg-black/60 flex items-center justify-center z-50 hidden" style="backdrop-filter: blur(2px);">
+        <div class="bg-white flex flex-col shadow-2xl fade-in" style="padding: 2cqw; border-radius: 1cqw; max-width: 45cqw; width: 40cqw;">
+          <h2 style="font-size: 1.6cqw; font-weight: bold; margin-bottom: 1cqw; color: #1f2937;">📝 構成をまとめますか？</h2>
+          <p class="text-[1.2cqw] mb-5 text-gray-700 leading-relaxed">
+            現在、抽出・構成されたページがリストに存在します。<br>
+            装飾や結合などの別作業へ移る前に、この構成結果をひとつのPDFとしてまとめる必要があります。<br><br>
+            <span class="font-bold text-blue-600">「構成済_〇〇.pdf」として左の書庫に自動追加して作業を続けますか？</span>
+          </p>
+          <div class="flex justify-end gap-3 mt-2">
+            <button onclick="cancelSwitchMode()" class="bg-gray-200 text-gray-800 hover:bg-gray-300 transition px-4 py-2 rounded text-[1.1cqw] font-bold">まとめない (そのまま移動)</button>
+            <button onclick="executeCompileAndSwitchMode()" class="bg-blue-600 text-white hover:bg-blue-700 transition px-5 py-2 rounded text-[1.1cqw] font-bold shadow-md">まとめる (おすすめ)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 画像アップロード用非表示インプット -->
+      <input type="file" id="hidden-image-input" accept="image/png, image/jpeg" onchange="handleImageUpload(event)" class="hidden">
+      <input type="file" id="hidden-image-replace" accept="image/png, image/jpeg" onchange="handleImageUpload(event)" class="hidden">
+      
+    </div>
+  </div>
+
+  <script>
+    const { PDFDocument, rgb, degrees } = PDFLib;
+    let pdfData = [];
+    let activeFileId = null;
+    let currentMode = 'extract'; 
+    let currentPreviewPage = 1;
+    let zoomLevel = 1.0;
+    let baseContainerSize = { w: 0, h: 0 };
+    let currentPdfPageScale = 1.0; 
+    
+    // グローバルな抽出リスト（複数PDF横断抽出に対応）
+    let globalExtractList = [];
+    let extractSelectedIndex = -1;
+
+    // 状態管理
+    let decorState = {
+      items: [], 
+      drawMode: 'standard' 
+    };
+
+    // --- オートセーブ (IndexedDB) 管理 ---
+    const DB_NAME = 'PdfEditorDB';
+    const STORE_NAME = 'autosave';
+
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = e => {
+          if(!e.target.result.objectStoreNames.contains(STORE_NAME)){
+            e.target.result.createObjectStore(STORE_NAME);
+          }
+        };
+        req.onsuccess = e => resolve(e.target.result);
+        req.onerror = e => reject(e.target.error);
+      });
+    }
+
+    async function setAutoSaveData(data) {
+      try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put(data, 'state');
+      } catch (e) { console.warn('自動保存に失敗しました', e); }
+    }
+
+    async function getAutoSaveData() {
+      try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const req = tx.objectStore(STORE_NAME).get('state');
+        return new Promise((resolve, reject) => {
+          req.onsuccess = e => resolve(e.target.result);
+          req.onerror = reject;
+        });
+      } catch (e) { return null; }
+    }
+
+    let autoSaveTimeout = null;
+    function debounceAutoSave() {
+      clearTimeout(autoSaveTimeout);
+      autoSaveTimeout = setTimeout(async () => {
+        if (pdfData.length === 0 && decorState.items.length === 0) return;
+        const saveData = {
+          version: 9,
+          pdfs: pdfData.map(f => ({ id: f.id, name: f.name, pageCount: f.pageCount, bytes: f.bytes, pageRotations: f.pageRotations || [] })),
+          globalExtractList: globalExtractList,
+          decorState: decorState,
+          activeFileId: activeFileId,
+          currentMode: currentMode
+        };
+        await setAutoSaveData(saveData);
+      }, 1000); 
+    }
+
+    async function loadAutoSave() {
+      const data = await getAutoSaveData();
+      if (!data || !data.pdfs || data.pdfs.length === 0) return;
+      
+      showLoading(true, "前回の作業データを復元しています...");
+      try {
+        pdfData = [];
+        for (const f of data.pdfs) {
+          const bytes = f.bytes;
+          const pdfJsDoc = await pdfjsLib.getDocument({data: bytes.slice(0)}).promise;
+          const thumbnails = [];
+          for (let i = 1; i <= f.pageCount; i++) {
+            const page = await pdfJsDoc.getPage(i); const canvas = document.createElement('canvas'); const viewport = page.getViewport({ scale: 0.5 });
+            canvas.width = viewport.width; canvas.height = viewport.height;
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+            thumbnails.push(canvas.toDataURL('image/jpeg', 0.7));
+          }
+          pdfData.push({ id: f.id, name: f.name, bytes, pageCount: f.pageCount, pdfJsDoc, thumbnails, pageRotations: f.pageRotations || Array(f.pageCount).fill(0) });
+        }
+        
+        globalExtractList = data.globalExtractList || [];
+        
+        let loadedState = data.decorState || {};
+        if (loadedState.items === undefined) {
+          decorState = { items: [], drawMode: loadedState.drawMode || 'standard' };
+        } else {
+          decorState = loadedState;
+        }
+
+        activeFileId = data.activeFileId || (pdfData.length ? pdfData[0].id : null);
+        currentMode = data.currentMode || 'extract';
+        
+        updateFileList(); 
+        
+        // タブUIの復元とレイアウト切り替え
+        const targetBtn = document.querySelector(`.tab-btn[data-tab="${currentMode}"]`);
+        if(targetBtn) switchTab(targetBtn);
+        
+        renderPreview();
+        initHistory(); 
+      } catch (err) {
+        console.error("オートセーブ復元エラー", err);
+      }
+      showLoading(false);
+    }
+
+    function confirmClearAllData() {
+      document.getElementById('clear-confirm-modal').classList.remove('hidden');
+    }
+
+    function executeClearAllData() {
+      document.getElementById('clear-confirm-modal').classList.add('hidden');
+      pdfData = [];
+      activeFileId = null;
+      globalExtractList = [];
+      extractSelectedIndex = -1;
+      decorState = { items: [], drawMode: 'standard' };
+      initHistory();
+      updateFileList();
+      renderPreview();
+      debounceAutoSave();
+    }
+
+    // --- 履歴 (Undo/Redo) 管理 ---
+    let historyStack = [];
+    let historyIndex = -1;
+    const MAX_HISTORY = 50;
+    let isRestoringHistory = false;
+
+    function initHistory() {
+      historyStack = [JSON.parse(JSON.stringify(decorState))];
+      historyIndex = 0;
+      updateUndoRedoUI();
+    }
+
+    function saveHistory() {
+      if (isRestoringHistory) return;
+      if (historyIndex < historyStack.length - 1) {
+        historyStack = historyStack.slice(0, historyIndex + 1);
+      }
+      const currentStateStr = JSON.stringify(decorState);
+      if (historyStack.length > 0 && JSON.stringify(historyStack[historyIndex]) === currentStateStr) {
+        return; 
+      }
+      historyStack.push(JSON.parse(currentStateStr));
+      if (historyStack.length > MAX_HISTORY) {
+        historyStack.shift();
+      } else {
+        historyIndex++;
+      }
+      updateUndoRedoUI();
+      debounceAutoSave(); 
+    }
+
+    function updateUndoRedoUI() {
+      const btnUndo = document.getElementById('btn-undo');
+      const btnRedo = document.getElementById('btn-redo');
+      if(btnUndo) btnUndo.disabled = historyIndex <= 0;
+      if(btnRedo) btnRedo.disabled = historyIndex >= historyStack.length - 1;
+    }
+
+    function undo() {
+      if (historyIndex > 0) {
+        isRestoringHistory = true; historyIndex--;
+        decorState = JSON.parse(JSON.stringify(historyStack[historyIndex]));
+        syncStateToPanel(); updatePreviewDecorations(); updateUndoRedoUI();
+        isRestoringHistory = false;
+        debounceAutoSave();
+      }
+    }
+
+    function redo() {
+      if (historyIndex < historyStack.length - 1) {
+        isRestoringHistory = true; historyIndex++;
+        decorState = JSON.parse(JSON.stringify(historyStack[historyIndex]));
+        syncStateToPanel(); updatePreviewDecorations(); updateUndoRedoUI();
+        isRestoringHistory = false;
+        debounceAutoSave();
+      }
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (currentMode !== 'edit') return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        if (e.shiftKey) redo(); else undo();
+        e.preventDefault();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        redo(); e.preventDefault();
+      }
+    });
+
+    window.addEventListener('DOMContentLoaded', () => { 
+      initHistory(); 
+      loadAutoSave(); 
+    });
+
+    // --- 日付＆プロンプトユーティリティ ---
+    function getTimestampString() {
+      const d = new Date(); const pad = n => n.toString().padStart(2, '0');
+      return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+    }
+
+    async function promptAsync(title, defaultValue) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('prompt-modal');
+        document.getElementById('prompt-title').textContent = title;
+        const input = document.getElementById('prompt-input');
+        input.value = defaultValue; modal.classList.remove('hidden'); input.focus(); input.select();
+        const okBtn = document.getElementById('prompt-ok-btn');
+        const okHandler = () => { resolve(input.value); cleanup(); };
+        const cancelHandler = () => { resolve(null); cleanup(); };
+        window.closePrompt = cancelHandler; okBtn.onclick = okHandler;
+        input.onkeydown = (e) => { if(e.key === 'Enter') okHandler(); };
+        function cleanup() { modal.classList.add('hidden'); okBtn.onclick = null; input.onkeydown = null; }
+      });
+    }
+
+    function showModal(title, msg, isSuccess=false) {
+      document.getElementById('modal-title').textContent = title; document.getElementById('modal-message').innerHTML = msg;
+      document.getElementById('modal-icon').innerHTML = isSuccess ? '✅' : '❗';
+      document.getElementById('custom-modal').classList.remove('hidden');
+    }
+    function closeModal() { document.getElementById('custom-modal').classList.add('hidden'); }
+    function showLoading(show, text="処理中...") {
+      document.getElementById('loading-text').textContent = text; document.getElementById('loading-overlay').classList.toggle('hidden', !show);
+    }
+
+    // --- 仕切りページ追加機能 ---
+    let blankPageTarget = 'extract'; 
+
+    function openBlankPageModal(target = 'extract') {
+      blankPageTarget = target;
+      document.getElementById('blank-page-modal').classList.remove('hidden');
+      const firstColorBtn = document.querySelector('.color-btn');
+      if (firstColorBtn) selectBlankColor(firstColorBtn, '#ffffff');
+    }
+    
+    function closeBlankPageModal() {
+      document.getElementById('blank-page-modal').classList.add('hidden');
+    }
+    
+    function selectBlankColor(btn, color) {
+      document.getElementById('blank-color').value = color;
+      document.querySelectorAll('.color-btn').forEach(b => {
+        b.classList.remove('border-2', 'border-blue-500');
+        b.classList.add('border', 'border-gray-300');
+      });
+      btn.classList.remove('border', 'border-gray-300');
+      btn.classList.add('border-2', 'border-blue-500');
+    }
+
+    async function executeAddBlankPage() {
+      const size = document.getElementById('blank-size').value; 
+      const colorHex = document.getElementById('blank-color').value; 
+      
+      let width, height;
+      if (size === 'a4-p') { width = 595.28; height = 841.89; }
+      else if (size === 'a4-l') { width = 841.89; height = 595.28; }
+      else if (size === 'b5-p') { width = 515.91; height = 728.5; }
+      else if (size === 'b5-l') { width = 728.5; height = 515.91; }
+      
+      const colorNames = {'#ffffff':'白', '#e0f2fe':'薄青', '#fce7f3':'薄桃', '#fef08a':'薄黄', '#dcfce7':'薄緑'};
+      const colorName = colorNames[colorHex] || '色付き';
+
+      if (blankPageTarget === 'extract') {
+        closeBlankPageModal();
+        const newItem = { 
+          id: 'ext_' + Date.now(), 
+          type: 'blank', 
+          color: colorHex, 
+          width: width, 
+          height: height, 
+          label: colorName 
+        };
+        
+        // スマート挿入（仕切りのみ、選択位置の直前にねじ込む）
+        if (extractSelectedIndex !== -1 && extractSelectedIndex < globalExtractList.length) {
+            globalExtractList.splice(extractSelectedIndex, 0, newItem);
+            extractSelectedIndex++; 
+        } else {
+            globalExtractList.push(newItem);
+            extractSelectedIndex = globalExtractList.length - 1; 
+        }
+        
+        renderPreview();
+        debounceAutoSave();
+        
+      } else if (blankPageTarget === 'merge') {
+        // 結合モードの場合は、独立したダミーPDFとして追加
+        closeBlankPageModal();
+        showLoading(true, "ページを生成中...");
+        try {
+          const doc = await PDFDocument.create();
+          const page = doc.addPage([width, height]);
+          if (colorHex !== '#ffffff') {
+            const rgbColor = hexToRgb(colorHex);
+            page.drawRectangle({ x: 0, y: 0, width: width, height: height, color: rgb(rgbColor.r, rgbColor.g, rgbColor.b) });
+          }
+          const pdfBytes = await doc.save();
+          const bufferToUse = pdfBytes.buffer.slice(pdfBytes.byteOffset, pdfBytes.byteLength + pdfBytes.byteOffset);
+          const pdfJsDoc = await pdfjsLib.getDocument({data: bufferToUse.slice(0)}).promise;
+          
+          const fileObj = { 
+            id: 'pdf_' + Date.now() + Math.random().toString(36).substr(2, 5), 
+            name: `仕切り_${colorName}.pdf`, 
+            bytes: bufferToUse, 
+            pageCount: 1, 
+            pdfJsDoc: pdfJsDoc, 
+            thumbnails: [],
+            pageRotations: [0]
+          };
+          
+          const page1 = await pdfJsDoc.getPage(1); 
+          const canvas = document.createElement('canvas'); 
+          const viewport = page1.getViewport({ scale: 0.5 });
+          canvas.width = viewport.width; canvas.height = viewport.height;
+          await page1.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+          fileObj.thumbnails.push(canvas.toDataURL('image/jpeg', 0.7));
+          
+          pdfData.push(fileObj);
+          if(!activeFileId) activeFileId = fileObj.id;
+          
+          updateFileList(); renderPreview(); debounceAutoSave();
+        } catch (err) { showModal('エラー', 'ページの生成に失敗しました。'); }
+        showLoading(false);
+      }
+    }
+
+    // --- パン（ドラッグ移動）機能 ---
+    const singlePane = document.getElementById('preview-single');
+    let isPanning = false, startPanX, startPanY, scrollLeftStart, scrollTopStart;
+    
+    singlePane.addEventListener('mousedown', (e) => {
+      if(e.target.closest('.draggable-item')) return;
+      isPanning = true;
+      singlePane.classList.remove('cursor-grab'); singlePane.classList.add('cursor-grabbing');
+      startPanX = e.pageX; startPanY = e.pageY; scrollLeftStart = singlePane.scrollLeft; scrollTopStart = singlePane.scrollTop;
+    });
+    singlePane.addEventListener('mouseleave', () => { isPanning = false; singlePane.classList.add('cursor-grab'); singlePane.classList.remove('cursor-grabbing'); });
+    window.addEventListener('mouseup', () => { isPanning = false; singlePane.classList.add('cursor-grab'); singlePane.classList.remove('cursor-grabbing'); });
+    window.addEventListener('mousemove', (e) => {
+      if(!isPanning) return; e.preventDefault();
+      singlePane.scrollLeft = scrollLeftStart - (e.pageX - startPanX); singlePane.scrollTop = scrollTopStart - (e.pageY - startPanY);
+    });
+
+    // --- タブとモード切り替え制御 ---
+    let pendingTabTarget = null;
+
+    function isExtractListModified() {
+        if (!activeFileId || globalExtractList.length === 0) return false;
+        const file = pdfData.find(f => f.id === activeFileId);
+        if (!file) return false;
+        
+        if (globalExtractList.length !== file.pageCount) return true;
+        for (let i = 0; i < globalExtractList.length; i++) {
+            const item = globalExtractList[i];
+            if (item.type !== 'page') return true;
+            if (item.fileId !== activeFileId) return true;
+            if (item.pageNum !== i + 1) return true;
+        }
+        return false;
+    }
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const targetTab = e.currentTarget.dataset.tab;
+        
+        if (currentMode === 'extract' && targetTab !== 'extract') {
+            if (isExtractListModified()) {
+                pendingTabTarget = targetTab;
+                document.getElementById('switch-mode-confirm-modal').classList.remove('hidden');
+                return; 
+            }
+        }
+        
+        switchTab(e.currentTarget);
+      });
+    });
+
+    function switchTab(targetBtn) {
+        document.querySelectorAll('.tab-btn').forEach(b => {
+          b.className = 'tab-btn text-white/80 hover:text-white rounded-md transition'; b.style.padding = '0.5cqw 1.5cqw'; b.style.fontSize = '1.3cqw';
+        });
+        targetBtn.className = 'tab-btn bg-white font-bold shadow-sm rounded-md transition ' + targetBtn.dataset.color.replace('bg-','text-');
+        document.getElementById('app-body').className = targetBtn.dataset.theme;
+        document.getElementById('app-header').className = `flex items-center justify-between flex-shrink-0 transition-colors duration-300 text-white ${targetBtn.dataset.color}`;
+        
+        ['extract', 'merge', 'edit'].forEach(m => document.getElementById(`panel-${m}`).classList.add('hidden'));
+        document.getElementById(`panel-${targetBtn.dataset.tab}`).classList.remove('hidden');
+        currentMode = targetBtn.dataset.tab;
+        
+        document.getElementById('zoom-controls').classList.toggle('hidden', currentMode !== 'edit');
+
+        // ★ 動的レイアウトの切り替え
+        if (currentMode === 'edit') {
+            document.getElementById('floating-toolbox').classList.remove('hidden');
+            document.getElementById('floating-toolbox').classList.add('flex');
+        } else {
+            document.getElementById('floating-toolbox').classList.add('hidden');
+            document.getElementById('floating-toolbox').classList.remove('flex');
+        }
+
+        renderPreview();
+        debounceAutoSave();
+    }
+
+    function cancelSwitchMode() {
+        document.getElementById('switch-mode-confirm-modal').classList.add('hidden');
+        if (pendingTabTarget) {
+            const targetBtn = document.querySelector(`.tab-btn[data-tab="${pendingTabTarget}"]`);
+            if (targetBtn) switchTab(targetBtn);
+        }
+        pendingTabTarget = null;
+    }
+
+    async function executeCompileAndSwitchMode() {
+        document.getElementById('switch-mode-confirm-modal').classList.add('hidden');
+        if (!pendingTabTarget) return;
+        
+        showLoading(true, "構成をひとつのPDFにまとめています...");
+        try {
+            const newDoc = await PDFDocument.create(); 
+            const loadedDocs = {};
+            
+            for (const item of globalExtractList) {
+              if (item.type === 'page') {
+                const file = pdfData.find(f => f.id === item.fileId);
+                if (file) {
+                    if (!loadedDocs[file.id]) {
+                        loadedDocs[file.id] = await PDFDocument.load(file.bytes.slice(0));
+                    }
+                    const srcDoc = loadedDocs[file.id];
+                    const [copiedPage] = await newDoc.copyPages(srcDoc, [item.pageNum - 1]);
+                    // 回転の適用
+                    const currentRot = (file.pageRotations && file.pageRotations[item.pageNum - 1]) ? file.pageRotations[item.pageNum - 1] : 0;
+                    if (currentRot !== 0) {
+                        copiedPage.setRotation(degrees(copiedPage.getRotation().angle + currentRot));
+                    }
+                    newDoc.addPage(copiedPage);
+                }
+              } else if (item.type === 'blank') {
+                const page = newDoc.addPage([item.width, item.height]);
+                if (item.color !== '#ffffff') {
+                  const c = hexToRgb(item.color);
+                  page.drawRectangle({
+                    x: 0, y: 0, width: item.width, height: item.height,
+                    color: rgb(c.r, c.g, c.b)
+                  });
+                }
+              }
+            }
+            
+            const pdfBytes = await newDoc.save();
+            const bufferToUse = pdfBytes.buffer.slice(pdfBytes.byteOffset, pdfBytes.byteLength + pdfBytes.byteOffset);
+            const pdfJsDoc = await pdfjsLib.getDocument({data: bufferToUse.slice(0)}).promise;
+            
+            const fileName = `構成済_${getTimestampString()}.pdf`;
+            const fileObj = { 
+                id: 'pdf_' + Date.now() + Math.random().toString(36).substr(2, 5), 
+                name: fileName, 
+                bytes: bufferToUse, 
+                pageCount: pdfJsDoc.numPages, 
+                pdfJsDoc: pdfJsDoc, 
+                thumbnails: [],
+                pageRotations: Array(pdfJsDoc.numPages).fill(0)
+            };
+            
+            for (let i = 1; i <= fileObj.pageCount; i++) {
+                const page = await pdfJsDoc.getPage(i); 
+                const canvas = document.createElement('canvas'); 
+                const viewport = page.getViewport({ scale: 0.5 });
+                canvas.width = viewport.width; canvas.height = viewport.height;
+                await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+                fileObj.thumbnails.push(canvas.toDataURL('image/jpeg', 0.7));
+            }
+            
+            pdfData.push(fileObj);
+            activeFileId = fileObj.id; 
+            globalExtractList = []; 
+            extractSelectedIndex = -1;
+            
+            updateFileList();
+            
+            const targetBtn = document.querySelector(`.tab-btn[data-tab="${pendingTabTarget}"]`);
+            if (targetBtn) switchTab(targetBtn);
+            
+            debounceAutoSave();
+        } catch (e) {
+            showModal('エラー', 'まとめ処理に失敗しました。');
+        }
+        showLoading(false);
+        pendingTabTarget = null;
+    }
+
+    // --- ページの回転機能 ---
+    function rotatePage(deg) {
+      if (!activeFileId) return;
+      const file = pdfData.find(f => f.id === activeFileId);
+      if (!file) return;
+      if (!file.pageRotations) file.pageRotations = Array(file.pageCount).fill(0);
+      
+      file.pageRotations[currentPreviewPage - 1] = (file.pageRotations[currentPreviewPage - 1] + deg + 360) % 360;
+      
+      renderPreview();
+      debounceAutoSave();
+    }
+
+    function setZoom(diff, reset=false) {
+      if(reset) zoomLevel = 1.0; else zoomLevel += diff;
+      if(zoomLevel < 0.2) zoomLevel = 0.2; if(zoomLevel > 3.0) zoomLevel = 3.0;
+      document.getElementById('zoom-text').textContent = Math.round(zoomLevel * 100) + '%';
+      
+      const cont = document.getElementById('preview-canvas-container');
+      const wrap = document.getElementById('zoom-wrapper');
+      cont.style.transform = `scale(${zoomLevel})`;
+      wrap.style.width = `${baseContainerSize.w * zoomLevel}px`;
+      wrap.style.height = `${baseContainerSize.h * zoomLevel}px`;
+    }
+
+    // --- フローティングツールボックスのドラッグ機能 ---
+    const fbox = document.getElementById('floating-toolbox');
+    const fboxHeader = document.getElementById('floating-toolbox-header');
+    let isFboxDragging = false;
+    let fboxOffsetX = 0, fboxOffsetY = 0;
+
+    fboxHeader.addEventListener('mousedown', (e) => {
+        isFboxDragging = true;
+        const rect = fbox.getBoundingClientRect();
+        const containerRect = document.getElementById('app-container').getBoundingClientRect();
+        
+        // 初回など、top/left が明示指定されていない状態を安全にピクセル値へ変換
+        fbox.style.left = (rect.left - containerRect.left) + 'px';
+        fbox.style.top = (rect.top - containerRect.top) + 'px';
+        fbox.style.bottom = 'auto';
+        fbox.style.right = 'auto';
+
+        fboxOffsetX = e.clientX - rect.left;
+        fboxOffsetY = e.clientY - rect.top;
+        e.preventDefault(); 
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isFboxDragging) return;
+        const containerRect = document.getElementById('app-container').getBoundingClientRect();
+        
+        let newLeft = e.clientX - containerRect.left - fboxOffsetX;
+        let newTop = e.clientY - containerRect.top - fboxOffsetY;
+        
+        newLeft = Math.max(0, Math.min(newLeft, containerRect.width - fbox.offsetWidth));
+        newTop = Math.max(0, Math.min(newTop, containerRect.height - fbox.offsetHeight));
+
+        fbox.style.left = newLeft + 'px';
+        fbox.style.top = newTop + 'px';
+    });
+
+    window.addEventListener('mouseup', () => {
+        isFboxDragging = false;
+    });
+
+    // --- 統合アイテム管理 (装飾・マスク用) ---
+
+    function addItem(type) {
+      const id = type + '_' + Date.now();
+      let newItem = { id, type, isOpen: true, mode: 'all', pageRange: '', pageNum: currentPreviewPage };
+      if (type === 'pagenum') {
+        newItem = { ...newItem, x: 50, y: 95, size: 14, startPdfPage: 1, startNum: 1 };
+      } else if (type === 'text') {
+        newItem = { ...newItem, val: '', font: 'sans-serif', color: '#ef4444', size: 24, x: 50, y: 50 };
+      } else if (type === 'image') {
+        newItem = { ...newItem, size: 30, x: 50, y: 50, dataUrl: null, mimeType: null, bytesBase64: null, origW: 0, origH: 0 };
+        document.getElementById('hidden-image-input').setAttribute('data-target-id', id);
+        document.getElementById('hidden-image-input').click();
+        return; 
+      } else if (type === 'mask') {
+        newItem = { ...newItem, mode: 'page', x: 50, y: 50, w: 20, h: 10, color: '#ffffff' };
+      } else if (type === 'rect') { // 枠線を追加
+        newItem = { ...newItem, mode: 'page', x: 50, y: 50, w: 20, h: 10, color: '#f59e0b', borderWidth: 4 };
+      } else if (type === 'circle') { // 丸枠線を追加
+        newItem = { ...newItem, mode: 'page', x: 50, y: 50, w: 20, h: 20, color: '#ef4444', borderWidth: 4 };
+      } else if (type === 'watermark') { // 透かしを追加
+        newItem = { ...newItem, val: '社外秘', font: 'sans-serif', color: '#ff0000', size: 60, x: 50, y: 50, opacity: 0.3, angle: -45 };
+      }
+      
+      decorState.items.unshift(newItem); 
+      saveHistory();
+      renderItemsUI();
+      updatePreviewDecorations();
+    }
+
+    function removeItem(id) {
+      decorState.items = decorState.items.filter(i => i.id !== id);
+      saveHistory();
+      renderItemsUI();
+      updatePreviewDecorations();
+    }
+
+    function toggleItemOpen(id) {
+      const item = decorState.items.find(i => i.id === id);
+      if(item) { item.isOpen = !item.isOpen; renderItemsUI(); }
+    }
+
+    function moveItem(index, dir) {
+      if (dir === -1 && index > 0) { 
+        [decorState.items[index-1], decorState.items[index]] = [decorState.items[index], decorState.items[index-1]];
+      } else if (dir === 1 && index < decorState.items.length - 1) { 
+        [decorState.items[index], decorState.items[index+1]] = [decorState.items[index+1], decorState.items[index]];
+      }
+      saveHistory();
+      renderItemsUI();
+      updatePreviewDecorations();
+    }
+
+    function updateItemValue(id, prop, val) {
+      if (isRestoringHistory) return;
+      const item = decorState.items.find(i => i.id === id);
+      if (!item) return;
+      
+      if (['size', 'x', 'y', 'w', 'h', 'startPdfPage', 'startNum', 'borderWidth', 'opacity', 'angle'].includes(prop)) {
+        val = parseFloat(val) || 0;
+        updateItemValueSilently(id, prop, val);
+      }
+      
+      item[prop] = val;
+      updatePreviewDecorations();
+      
+      clearTimeout(item._saveTimer);
+      item._saveTimer = setTimeout(() => { saveHistory(); }, 500);
+    }
+
+    function updateItemValueSilently(id, prop, val) {
+      const slider = document.getElementById(`${prop}-slider-${id}`);
+      const num = document.getElementById(`${prop}-num-${id}`);
+      if(slider) slider.value = val;
+      if(num) num.value = parseFloat(val).toFixed(1);
+    }
+
+    function updateDrawMode(val) {
+      decorState.drawMode = val;
+      saveHistory();
+    }
+
+    function syncStateToPanel() {
+      if (isRestoringHistory) return;
+      document.getElementById('edit-draw-mode').value = decorState.drawMode || 'standard';
+      renderItemsUI();
+    }
+
+    function renderItemsUI() {
+      const container = document.getElementById('items-list-ui');
+      const emptyMsg = document.getElementById('items-empty-msg');
+      
+      if (decorState.items.length === 0) {
+        container.innerHTML = '';
+        emptyMsg.classList.remove('hidden');
+        return;
+      }
+      
+      emptyMsg.classList.add('hidden');
+      let html = '';
+      
+      decorState.items.forEach((item, index) => {
+        let title = ''; let bgColor = '';
+        if (item.type === 'pagenum') { title = '🔢 ページ番号'; bgColor = 'bg-blue-50'; }
+        else if (item.type === 'text') { title = `📝 ${item.val ? item.val.substring(0,8)+'...' : 'テキスト'}`; bgColor = 'bg-indigo-50'; }
+        else if (item.type === 'image') { title = '🖼️ 画像'; bgColor = 'bg-pink-50'; }
+        else if (item.type === 'mask') { title = `🧽 マスク (${item.mode==='all'?'全':item.mode==='page'?'P'+item.pageNum:'指定'})`; bgColor = 'bg-gray-100'; }
+        else if (item.type === 'rect') { title = `🔲 四角枠 (${item.mode==='all'?'全':item.mode==='page'?'P'+item.pageNum:'指定'})`; bgColor = 'bg-amber-50'; }
+        else if (item.type === 'circle') { title = `⭕ 丸枠 (${item.mode==='all'?'全':item.mode==='page'?'P'+item.pageNum:'指定'})`; bgColor = 'bg-amber-50'; }
+        else if (item.type === 'watermark') { title = `🔏 透かし (${item.val ? item.val.substring(0,6) : ''})`; bgColor = 'bg-teal-50'; }
+        
+        html += `
+          <div class="border rounded shadow-sm ${item.isOpen ? 'border-blue-400 ring-1 ring-blue-400' : 'border-gray-200'} transition-all">
+            <div class="flex items-center justify-between p-1.5 cursor-pointer hover:bg-gray-50 ${bgColor} ${item.isOpen?'rounded-t':'rounded'}" onclick="toggleItemOpen('${item.id}')">
+              <span class="font-bold text-[1cqw] truncate flex-1">${title}</span>
+              <div class="flex gap-1 ml-1" onclick="event.stopPropagation()">
+                <button onclick="moveItem(${index}, -1)" class="bg-white border border-gray-300 rounded px-1.5 py-0.5 text-[0.9cqw] hover:bg-gray-100" title="手前へ">⬆️</button>
+                <button onclick="moveItem(${index}, 1)" class="bg-white border border-gray-300 rounded px-1.5 py-0.5 text-[0.9cqw] hover:bg-gray-100" title="奥へ">⬇️</button>
+                <button onclick="removeItem('${item.id}')" class="bg-white border border-red-300 rounded px-1.5 py-0.5 text-[0.9cqw] hover:bg-red-50 text-red-500" title="削除">🗑️</button>
+              </div>
+            </div>
+            <div class="p-2 bg-white rounded-b ${item.isOpen ? 'block' : 'hidden'}">
+              ${getItemBodyHtml(item)}
+            </div>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+    }
+
+    function getItemApplyHtml(item) {
+      let html = `
+        <div class="flex items-center gap-1 text-[1cqw] mb-1">
+          <span>適用:</span>
+          <select onchange="updateItemValue('${item.id}', 'mode', this.value); renderItemsUI();" class="border bg-white rounded p-0.5">
+            <option value="all" ${item.mode==='all'?'selected':''}>全ページ</option>
+            <option value="page" ${item.mode==='page'?'selected':''}>現在頁</option>
+            <option value="custom" ${item.mode==='custom'?'selected':''}>指定範囲</option>
+          </select>
+      `;
+      if (item.mode === 'custom') {
+        html += `<input type="text" value="${item.pageRange}" placeholder="例: 1, 3-5" oninput="updateItemValue('${item.id}', 'pageRange', this.value)" class="border rounded px-1 w-full max-w-[8cqw]">`;
+      } else if (item.mode === 'page') {
+        html += `<span class="border rounded px-1 bg-gray-100">P.${item.pageNum}</span>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    function getItemXYHtml(item) {
+      return `
+        <div class="flex items-center justify-between bg-gray-50 p-1 rounded text-[1cqw] mt-1">
+          <span>X(%):</span>
+          <input type="range" id="x-slider-${item.id}" value="${item.x}" min="0" max="100" oninput="updateItemValue('${item.id}', 'x', this.value)" class="w-1/4">
+          <input type="number" id="x-num-${item.id}" value="${item.x}" oninput="updateItemValue('${item.id}', 'x', this.value)" class="w-10 border rounded text-center">
+          <span class="ml-1">Y(%):</span>
+          <input type="range" id="y-slider-${item.id}" value="${item.y}" min="0" max="100" oninput="updateItemValue('${item.id}', 'y', this.value)" class="w-1/4">
+          <input type="number" id="y-num-${item.id}" value="${item.y}" oninput="updateItemValue('${item.id}', 'y', this.value)" class="w-10 border rounded text-center">
+        </div>
+      `;
+    }
+
+    function getItemBodyHtml(item) {
+      if (item.type === 'pagenum') {
+        return `
+          <div class="flex items-center gap-1 text-[1cqw] mb-1">
+            開始:<input type="number" value="${item.startPdfPage}" onchange="updateItemValue('${item.id}', 'startPdfPage', this.value); renderItemsUI();" class="w-10 border rounded text-center">頁目から、
+            <input type="number" value="${item.startNum}" onchange="updateItemValue('${item.id}', 'startNum', this.value); renderItemsUI();" class="w-10 border rounded text-center">番として印字
+          </div>
+          <div class="flex items-center justify-between text-[1cqw] mt-1">
+            <span>サイズ:</span>
+            <input type="range" id="size-slider-${item.id}" value="${item.size}" min="1" max="100" oninput="updateItemValue('${item.id}', 'size', this.value)" class="w-1/2">
+            <input type="number" id="size-num-${item.id}" value="${item.size}" oninput="updateItemValue('${item.id}', 'size', this.value)" class="w-10 border rounded text-center">
+          </div>
+          ${getItemXYHtml(item)}
+        `;
+      } else if (item.type === 'text') {
+        return `
+          ${getItemApplyHtml(item)}
+          <textarea placeholder="文字を入力" rows="2" oninput="updateItemValue('${item.id}', 'val', this.value)" class="bg-white border p-1 rounded w-full text-[1.1cqw] resize-none mb-1">${item.val}</textarea>
+          <div class="flex gap-1 mb-1">
+            <select onchange="updateItemValue('${item.id}', 'font', this.value)" class="bg-white border p-1 rounded text-[0.9cqw] flex-1">
+              <option value="sans-serif" ${item.font==='sans-serif'?'selected':''}>ゴシック</option>
+              <option value="serif" ${item.font==='serif'?'selected':''}>明朝</option>
+              <option value="monospace" ${item.font==='monospace'?'selected':''}>等幅</option>
+              <option value="'Meiryo', sans-serif" ${item.font==="'Meiryo', sans-serif"?'selected':''}>メイリオ</option>
+              <option value="'Yu Gothic', sans-serif" ${item.font==="'Yu Gothic', sans-serif"?'selected':''}>游ゴシック</option>
+              <option value="'MS PMincho', serif" ${item.font==="'MS PMincho', serif"?'selected':''}>MS P明朝</option>
+              <option value="'Hiragino Kaku Gothic ProN', sans-serif" ${item.font==="'Hiragino Kaku Gothic ProN', sans-serif"?'selected':''}>ヒラギノ</option>
+            </select>
+            <div class="flex items-center bg-white border p-1 rounded px-2">
+              <span class="text-[0.9cqw] mr-1">色:</span>
+              <input type="color" value="${item.color}" onchange="updateItemValue('${item.id}', 'color', this.value)" class="w-[1.5cqw] h-[1.5cqw] border-0 cursor-pointer p-0">
+            </div>
+          </div>
+          <div class="flex items-center justify-between text-[1cqw] mt-1">
+            <span>サイズ:</span>
+            <input type="range" id="size-slider-${item.id}" value="${item.size}" min="1" max="100" oninput="updateItemValue('${item.id}', 'size', this.value)" class="w-1/2">
+            <input type="number" id="size-num-${item.id}" value="${item.size}" oninput="updateItemValue('${item.id}', 'size', this.value)" class="w-10 border rounded text-center">
+          </div>
+          ${getItemXYHtml(item)}
+        `;
+      } else if (item.type === 'watermark') {
+        return `
+          ${getItemApplyHtml(item)}
+          <input type="text" placeholder="透かし文字" value="${item.val}" oninput="updateItemValue('${item.id}', 'val', this.value)" class="bg-white border p-1 rounded w-full text-[1.1cqw] mb-1">
+          <div class="flex gap-1 mb-1">
+            <select onchange="updateItemValue('${item.id}', 'font', this.value)" class="bg-white border p-1 rounded text-[0.9cqw] flex-1">
+              <option value="sans-serif" ${item.font==='sans-serif'?'selected':''}>ゴシック</option>
+              <option value="serif" ${item.font==='serif'?'selected':''}>明朝</option>
+            </select>
+            <div class="flex items-center bg-white border p-1 rounded px-2">
+              <span class="text-[0.9cqw] mr-1">色:</span>
+              <input type="color" value="${item.color}" onchange="updateItemValue('${item.id}', 'color', this.value)" class="w-[1.5cqw] h-[1.5cqw] border-0 cursor-pointer p-0">
+            </div>
+          </div>
+          <div class="flex flex-col gap-1 text-[1cqw] mt-1">
+            <div class="flex items-center justify-between">
+              <span>サイズ:</span>
+              <input type="range" id="size-slider-${item.id}" value="${item.size}" min="10" max="200" oninput="updateItemValue('${item.id}', 'size', this.value)" class="w-1/2">
+            </div>
+            <div class="flex items-center justify-between">
+              <span>透明度:</span>
+              <input type="range" id="opacity-slider-${item.id}" value="${item.opacity}" min="0.1" max="1" step="0.1" oninput="updateItemValue('${item.id}', 'opacity', this.value)" class="w-1/2">
+            </div>
+            <div class="flex items-center justify-between">
+              <span>角度:</span>
+              <input type="range" id="angle-slider-${item.id}" value="${item.angle}" min="-180" max="180" oninput="updateItemValue('${item.id}', 'angle', this.value)" class="w-1/2">
+            </div>
+          </div>
+          ${getItemXYHtml(item)}
+        `;
+      } else if (item.type === 'image') {
+        return `
+          ${getItemApplyHtml(item)}
+          <div class="flex items-center gap-2 mb-1">
+            <img src="${item.dataUrl}" class="h-10 w-auto border bg-gray-100">
+          </div>
+          <div class="flex items-center justify-between text-[1cqw] mt-1">
+            <span>幅(%):</span>
+            <input type="range" id="size-slider-${item.id}" value="${item.size}" min="1" max="100" oninput="updateItemValue('${item.id}', 'size', this.value)" class="w-1/2">
+            <input type="number" id="size-num-${item.id}" value="${item.size}" oninput="updateItemValue('${item.id}', 'size', this.value)" class="w-10 border rounded text-center">
+          </div>
+          ${getItemXYHtml(item)}
+        `;
+      } else if (item.type === 'mask') {
+        let maskHtml = getItemApplyHtml(item);
+        maskHtml = maskHtml.replace('</div>', `
+            <div class="flex items-center bg-white border p-1 rounded px-2 ml-auto">
+              <span class="text-[0.9cqw] mr-1">色:</span>
+              <input type="color" value="${item.color}" onchange="updateItemValue('${item.id}', 'color', this.value)" class="w-[1.5cqw] h-[1.5cqw] border-0 cursor-pointer p-0">
+            </div>
+          </div>
+        `);
+        return `
+          ${maskHtml}
+          <div class="flex items-center justify-between text-[1cqw] mt-1">
+            <span>W(%):</span>
+            <input type="range" id="w-slider-${item.id}" value="${item.w}" min="1" max="100" oninput="updateItemValue('${item.id}', 'w', this.value)" class="w-1/4">
+            <input type="number" id="w-num-${item.id}" value="${item.w}" oninput="updateItemValue('${item.id}', 'w', this.value)" class="w-10 border rounded text-center">
+            <span class="ml-1">H(%):</span>
+            <input type="range" id="h-slider-${item.id}" value="${item.h}" min="1" max="100" oninput="updateItemValue('${item.id}', 'h', this.value)" class="w-1/4">
+            <input type="number" id="h-num-${item.id}" value="${item.h}" oninput="updateItemValue('${item.id}', 'h', this.value)" class="w-10 border rounded text-center">
+          </div>
+          ${getItemXYHtml(item)}
+        `;
+      } else if (item.type === 'rect' || item.type === 'circle') {
+        let maskHtml = getItemApplyHtml(item);
+        maskHtml = maskHtml.replace('</div>', `
+            <div class="flex items-center bg-white border p-1 rounded px-2 ml-auto">
+              <span class="text-[0.9cqw] mr-1">色:</span>
+              <input type="color" value="${item.color}" onchange="updateItemValue('${item.id}', 'color', this.value)" class="w-[1.5cqw] h-[1.5cqw] border-0 cursor-pointer p-0">
+            </div>
+          </div>
+        `);
+        return `
+          ${maskHtml}
+          <div class="flex items-center justify-between text-[1cqw] mt-1">
+            <span>線の太さ:</span>
+            <input type="range" id="borderWidth-slider-${item.id}" value="${item.borderWidth}" min="1" max="20" oninput="updateItemValue('${item.id}', 'borderWidth', this.value)" class="w-1/2">
+            <input type="number" id="borderWidth-num-${item.id}" value="${item.borderWidth}" oninput="updateItemValue('${item.id}', 'borderWidth', this.value)" class="w-10 border rounded text-center">
+          </div>
+          <div class="flex items-center justify-between text-[1cqw] mt-1">
+            <span>W(%):</span>
+            <input type="range" id="w-slider-${item.id}" value="${item.w}" min="1" max="100" oninput="updateItemValue('${item.id}', 'w', this.value)" class="w-1/4">
+            <input type="number" id="w-num-${item.id}" value="${item.w}" oninput="updateItemValue('${item.id}', 'w', this.value)" class="w-10 border rounded text-center">
+            <span class="ml-1">H(%):</span>
+            <input type="range" id="h-slider-${item.id}" value="${item.h}" min="1" max="100" oninput="updateItemValue('${item.id}', 'h', this.value)" class="w-1/4">
+            <input type="number" id="h-num-${item.id}" value="${item.h}" oninput="updateItemValue('${item.id}', 'h', this.value)" class="w-10 border rounded text-center">
+          </div>
+          ${getItemXYHtml(item)}
+        `;
+      }
+    }
+
+    function parsePageRange(rangeStr, maxPage) {
+      const pages = new Set();
+      const parts = rangeStr.split(',');
+      for (let part of parts) {
+        part = part.trim(); if (!part) continue;
+        if (part.includes('-')) {
+          const [s, e] = part.split('-'); const start = parseInt(s); const end = parseInt(e);
+          if (!isNaN(start) && !isNaN(end) && start <= end) { for (let i = start; i <= end; i++) if (i >= 1 && i <= maxPage) pages.add(i); }
+        } else {
+          const num = parseInt(part); if (!isNaN(num) && num >= 1 && num <= maxPage) pages.add(num);
+        }
+      }
+      return Array.from(pages).sort((a,b)=>a-b);
+    }
+
+    function isItemVisible(item, pageIndex1, totalPages) {
+      const mode = item.mode || 'all';
+      if(mode === 'all') return true;
+      if(mode === 'page') return item.pageNum === pageIndex1;
+      if(mode === 'custom') { const pages = parsePageRange(item.pageRange || '', totalPages); return pages.includes(pageIndex1); }
+      return true;
+    }
+
+    // --- ドラッグ要素 ---
+    function makeDraggable(element, stateRef, onMoveCallback) {
+      let isDrag = false, sx, sy, ix, iy;
+      const start = (e) => {
+        isDrag = true; const ev = e.touches ? e.touches[0] : e;
+        sx = ev.clientX; sy = ev.clientY; ix = stateRef.x; iy = stateRef.y; e.stopPropagation();
+        
+        // クリック時にアコーディオンを開く
+        if (!stateRef.isOpen) {
+          decorState.items.forEach(i => i.isOpen = (i.id === stateRef.id));
+          renderItemsUI();
+          updatePreviewDecorations();
+        }
+      };
+      const move = (e) => {
+        if (!isDrag) return;
+        const ev = e.touches ? e.touches[0] : e;
+        const dx = (ev.clientX - sx) / zoomLevel; const dy = (ev.clientY - sy) / zoomLevel;
+        const rect = document.getElementById('preview-canvas-container').getBoundingClientRect();
+        const origW = rect.width / zoomLevel; const origH = rect.height / zoomLevel;
+        stateRef.x = Math.max(0, Math.min(100, ix + (dx / origW) * 100));
+        stateRef.y = Math.max(0, Math.min(100, iy + (dy / origH) * 100));
+        onMoveCallback();
+      };
+      const end = () => { 
+        if (isDrag) { isDrag = false; saveHistory(); }
+      };
+      element.addEventListener('mousedown', start); document.addEventListener('mousemove', move); document.addEventListener('mouseup', end);
+      element.addEventListener('touchstart', start, {passive:true}); document.addEventListener('touchmove', move, {passive:true}); document.addEventListener('touchend', end);
+    }
+
+    function handleImageUpload(e) {
+      const file = e.target.files[0]; 
+      const targetId = e.target.getAttribute('data-target-id');
+      const isReplace = e.target.id === 'hidden-image-replace';
+      e.target.value = ''; 
+      if(!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target.result;
+        const mimeType = file.type;
+        const img = new Image();
+        img.onload = () => { 
+          file.arrayBuffer().then(b => arrayBufferToBase64(b).then(b64 => {
+            if (!isReplace) {
+              decorState.items.unshift({
+                id: targetId, type: 'image', isOpen: true, mode: 'all', pageRange: '', pageNum: currentPreviewPage,
+                size: 30, x: 50, y: 50, origW: img.width, origH: img.height,
+                dataUrl: dataUrl, mimeType: mimeType, bytesBase64: b64
+              });
+            } else {
+              const item = decorState.items.find(i => i.id === targetId);
+              if (item) {
+                item.origW = img.width; item.origH = img.height;
+                item.dataUrl = dataUrl; item.mimeType = mimeType; item.bytesBase64 = b64;
+              }
+            }
+            saveHistory(); renderItemsUI(); updatePreviewDecorations(); 
+          }));
+        };
+        img.src = dataUrl;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function updatePreviewDecorations() {
+      if(currentMode !== 'edit') return;
+      const cont = document.getElementById('preview-canvas-container'); if(!cont) return;
+      cont.querySelectorAll('.draggable-item').forEach(e => e.remove());
+      const cvs = document.getElementById('preview-canvas'); if(!cvs) return;
+      const file = pdfData.find(f => f.id === activeFileId);
+      const totalPages = file ? file.pageCount : 999;
+
+      // リストの下(奥)から順に描画
+      [...decorState.items].reverse().forEach(item => {
+        if(item.type === 'pagenum') {
+          if (currentPreviewPage >= item.startPdfPage) {
+            const div = document.createElement('div');
+            div.className = `draggable-item font-bold whitespace-nowrap ${item.isOpen ? 'ring-2 ring-blue-500 z-10' : ''}`;
+            div.textContent = `- ${currentPreviewPage - item.startPdfPage + item.startNum} -`;
+            div.style.fontSize = `${item.size * currentPdfPageScale}px`;
+            div.style.lineHeight = '1';
+            div.style.left = `${item.x}%`; div.style.top = `${item.y}%`;
+            makeDraggable(div, item, () => { updateItemValueSilently(item.id, 'x', item.x); updateItemValueSilently(item.id, 'y', item.y); div.style.left=`${item.x}%`; div.style.top=`${item.y}%`; });
+            cont.appendChild(div);
+          }
+        }
+        else if (item.type === 'text' && item.val) {
+          if (isItemVisible(item, currentPreviewPage, totalPages)) {
+            const div = document.createElement('div');
+            div.className = `draggable-item font-bold ${item.isOpen ? 'ring-2 ring-blue-500 z-10' : ''}`;
+            div.style.whiteSpace = 'pre';
+            div.textContent = item.val;
+            div.style.fontFamily = item.font; div.style.color = item.color;
+            div.style.fontSize = `${item.size * currentPdfPageScale}px`;
+            div.style.lineHeight = '1.5';
+            div.style.left = `${item.x}%`; div.style.top = `${item.y}%`;
+            makeDraggable(div, item, () => { updateItemValueSilently(item.id, 'x', item.x); updateItemValueSilently(item.id, 'y', item.y); div.style.left=`${item.x}%`; div.style.top=`${item.y}%`; });
+            cont.appendChild(div);
+          }
+        }
+        else if (item.type === 'watermark' && item.val) {
+          if (isItemVisible(item, currentPreviewPage, totalPages)) {
+            const div = document.createElement('div');
+            div.className = `draggable-item font-bold ${item.isOpen ? 'ring-2 ring-blue-500 z-10' : ''}`;
+            div.style.whiteSpace = 'pre';
+            div.textContent = item.val;
+            div.style.fontFamily = item.font; div.style.color = item.color;
+            div.style.fontSize = `${item.size * currentPdfPageScale}px`;
+            div.style.lineHeight = '1.5';
+            div.style.opacity = item.opacity;
+            // draggable-item の translate(-50%, -50%) を上書きしないように併記
+            div.style.transform = `translate(-50%, -50%) rotate(${item.angle}deg)`;
+            div.style.left = `${item.x}%`; div.style.top = `${item.y}%`;
+            makeDraggable(div, item, () => { updateItemValueSilently(item.id, 'x', item.x); updateItemValueSilently(item.id, 'y', item.y); div.style.left=`${item.x}%`; div.style.top=`${item.y}%`; });
+            cont.appendChild(div);
+          }
+        }
+        else if (item.type === 'image' && item.dataUrl) {
+          if (isItemVisible(item, currentPreviewPage, totalPages)) {
+            const div = document.createElement('div');
+            div.className = `draggable-item ${item.isOpen ? 'ring-2 ring-blue-500 z-10' : ''}`;
+            div.innerHTML = `<img src="${item.dataUrl}" class="pointer-events-none block w-full h-full">`;
+            div.style.width = `${baseContainerSize.w * (item.size/100)}px`;
+            div.style.left = `${item.x}%`; div.style.top = `${item.y}%`;
+            makeDraggable(div, item, () => { updateItemValueSilently(item.id, 'x', item.x); updateItemValueSilently(item.id, 'y', item.y); div.style.left=`${item.x}%`; div.style.top=`${item.y}%`; });
+            cont.appendChild(div);
+          }
+        }
+        else if (item.type === 'mask') {
+          if(isItemVisible(item, currentPreviewPage, totalPages)) {
+            const div = document.createElement('div');
+            div.className = `draggable-item opacity-80 ${item.isOpen ? 'ring-2 ring-blue-500 z-10' : ''}`; 
+            div.style.backgroundColor = item.color;
+            div.style.width = `${item.w}%`; div.style.height = `${item.h}%`;
+            div.style.left = `${item.x}%`; div.style.top = `${item.y}%`;
+            let label = item.mode==='all'?'全':item.mode==='page'?'P'+item.pageNum:'範囲';
+            div.innerHTML = `<span class="absolute top-0 left-0 bg-black/70 text-white px-1 text-[10px] transform -translate-y-full">${label}</span>`;
+            makeDraggable(div, item, () => { updateItemValueSilently(item.id, 'x', item.x); updateItemValueSilently(item.id, 'y', item.y); div.style.left=`${item.x}%`; div.style.top=`${item.y}%`; });
+            cont.appendChild(div);
+          }
+        }
+        else if (item.type === 'rect') {
+          if(isItemVisible(item, currentPreviewPage, totalPages)) {
+            const div = document.createElement('div');
+            div.className = `draggable-item ${item.isOpen ? 'ring-2 ring-blue-500 z-10' : ''}`; 
+            div.style.border = `${item.borderWidth * currentPdfPageScale}px solid ${item.color}`;
+            div.style.width = `${item.w}%`; div.style.height = `${item.h}%`;
+            div.style.left = `${item.x}%`; div.style.top = `${item.y}%`;
+            let label = item.mode==='all'?'全':item.mode==='page'?'P'+item.pageNum:'範囲';
+            div.innerHTML = `<span class="absolute top-0 left-0 bg-black/70 text-white px-1 text-[10px] transform -translate-y-full">${label}</span>`;
+            makeDraggable(div, item, () => { updateItemValueSilently(item.id, 'x', item.x); updateItemValueSilently(item.id, 'y', item.y); div.style.left=`${item.x}%`; div.style.top=`${item.y}%`; });
+            cont.appendChild(div);
+          }
+        }
+        else if (item.type === 'circle') {
+          if(isItemVisible(item, currentPreviewPage, totalPages)) {
+            const div = document.createElement('div');
+            div.className = `draggable-item ${item.isOpen ? 'ring-2 ring-blue-500 z-10' : ''}`; 
+            div.style.border = `${item.borderWidth * currentPdfPageScale}px solid ${item.color}`;
+            div.style.borderRadius = '50%';
+            div.style.width = `${item.w}%`; div.style.height = `${item.h}%`;
+            div.style.left = `${item.x}%`; div.style.top = `${item.y}%`;
+            let label = item.mode==='all'?'全':item.mode==='page'?'P'+item.pageNum:'範囲';
+            div.innerHTML = `<span class="absolute top-0 left-0 bg-black/70 text-white px-1 text-[10px] transform -translate-y-full">${label}</span>`;
+            makeDraggable(div, item, () => { updateItemValueSilently(item.id, 'x', item.x); updateItemValueSilently(item.id, 'y', item.y); div.style.left=`${item.x}%`; div.style.top=`${item.y}%`; });
+            cont.appendChild(div);
+          }
+        }
+      });
+    }
+
+    // --- 抽出・再構成 機能 ---
+    let draggedExtractIndex = null;
+
+    function setExtractSelectedIndex(index) {
+      if (extractSelectedIndex === index) {
+        extractSelectedIndex = -1; 
+      } else {
+        extractSelectedIndex = index;
+      }
+      renderPreview(); 
+    }
+
+    function renderExtractListUI() {
+      const listUi = document.getElementById('extract-list-ui');
+      if(!globalExtractList || globalExtractList.length === 0) {
+        listUi.innerHTML = '<div class="text-gray-400 text-center text-[1cqw] py-4">ページが選択されていません</div>';
+        extractSelectedIndex = -1;
+        return;
+      }
+      
+      if (extractSelectedIndex >= globalExtractList.length) {
+          extractSelectedIndex = globalExtractList.length - 1;
+      }
+      
+      let html = '';
+      globalExtractList.forEach((item, index) => {
+        let title = ''; let bgColor = '';
+        if(item.type === 'page') {
+          const file = pdfData.find(f => f.id === item.fileId);
+          const fName = file ? file.name : '不明';
+          title = `<span class="text-[0.8cqw] text-gray-500 mr-1 truncate max-w-[8cqw] inline-block align-bottom" title="${fName}">${fName}</span> P.${item.pageNum}`;
+          bgColor = 'bg-white';
+        } else {
+          title = `仕切り (${item.label})`;
+          bgColor = 'bg-blue-50';
+        }
+        
+        const isSelected = index === extractSelectedIndex;
+        const borderClass = isSelected ? 'border-blue-500 border-2 shadow-md' : 'border-gray-200 border';
+        
+        html += `
+          <div class="flex items-center justify-between ${bgColor} ${borderClass} p-1 rounded text-[1cqw] cursor-pointer transition-all duration-200" 
+               draggable="true" 
+               ondragstart="onExtractDragStart(event, ${index})" 
+               ondragover="onExtractDragOver(event)" 
+               ondragenter="onExtractDragEnter(event)" 
+               ondragleave="onExtractDragLeave(event)" 
+               ondrop="onExtractDrop(event, ${index})" 
+               ondragend="onExtractDragEnd(event)"
+               onclick="setExtractSelectedIndex(${index})">
+            
+            <div class="flex items-center gap-2 pointer-events-none">
+              <span class="text-gray-400 mr-1" title="ドラッグで並び替え">≡</span>
+              <span class="bg-blue-500 text-white rounded-full w-[1.5cqw] h-[1.5cqw] flex items-center justify-center text-[0.8cqw] font-bold shadow-sm shrink-0">${index + 1}</span>
+              <span class="font-bold text-gray-700 truncate">${title}</span>
+            </div>
+            <div class="flex gap-1 shrink-0">
+              <button onclick="event.stopPropagation(); moveExtractItem(${index}, -1)" class="bg-gray-100 border border-gray-300 rounded px-1.5 hover:bg-gray-200" title="上へ">⬆️</button>
+              <button onclick="event.stopPropagation(); moveExtractItem(${index}, 1)" class="bg-gray-100 border border-gray-300 rounded px-1.5 hover:bg-gray-200" title="下へ">⬇️</button>
+              <button onclick="event.stopPropagation(); removeExtractItem(${index})" class="bg-gray-100 border border-red-300 rounded px-1.5 hover:bg-red-50 text-red-500" title="削除">🗑️</button>
+            </div>
+          </div>
+        `;
+      });
+      listUi.innerHTML = html;
+    }
+
+    function onExtractDragStart(e, index) {
+      draggedExtractIndex = index;
+      e.dataTransfer.effectAllowed = 'move';
+      setTimeout(() => e.target.classList.add('opacity-50'), 0);
+    }
+    function onExtractDragOver(e) {
+      e.preventDefault(); 
+      e.dataTransfer.dropEffect = 'move';
+      return false;
+    }
+    function onExtractDragEnter(e) {
+      e.currentTarget.classList.add('drag-over');
+    }
+    function onExtractDragLeave(e) {
+      e.currentTarget.classList.remove('drag-over');
+    }
+    function onExtractDrop(e, dropIndex) {
+      e.preventDefault();
+      e.currentTarget.classList.remove('drag-over');
+      if (draggedExtractIndex === null || draggedExtractIndex === dropIndex) return;
+      
+      const item = globalExtractList.splice(draggedExtractIndex, 1)[0];
+      globalExtractList.splice(dropIndex, 0, item);
+      
+      if (extractSelectedIndex === draggedExtractIndex) {
+          extractSelectedIndex = dropIndex;
+      } else if (draggedExtractIndex < extractSelectedIndex && dropIndex >= extractSelectedIndex) {
+          extractSelectedIndex--;
+      } else if (draggedExtractIndex > extractSelectedIndex && dropIndex <= extractSelectedIndex) {
+          extractSelectedIndex++;
+      }
+
+      draggedExtractIndex = null;
+      renderPreview();
+      debounceAutoSave();
+    }
+    function onExtractDragEnd(e) {
+      e.target.classList.remove('opacity-50');
+      draggedExtractIndex = null;
+    }
+
+    function moveExtractItem(index, dir) {
+      if(dir === -1 && index > 0) {
+        [globalExtractList[index-1], globalExtractList[index]] = [globalExtractList[index], globalExtractList[index-1]];
+        if(extractSelectedIndex === index) extractSelectedIndex = index - 1;
+        else if(extractSelectedIndex === index - 1) extractSelectedIndex = index;
+      } else if (dir === 1 && index < globalExtractList.length - 1) {
+        [globalExtractList[index], globalExtractList[index+1]] = [globalExtractList[index+1], globalExtractList[index]];
+        if(extractSelectedIndex === index) extractSelectedIndex = index + 1;
+        else if(extractSelectedIndex === index + 1) extractSelectedIndex = index;
+      }
+      renderPreview();
+      debounceAutoSave();
+    }
+
+    function removeExtractItem(index) {
+      globalExtractList.splice(index, 1);
+      
+      if (extractSelectedIndex === index) {
+          extractSelectedIndex = -1;
+      } else if (extractSelectedIndex > index) {
+          extractSelectedIndex--;
+      }
+      
+      renderPreview();
+      debounceAutoSave();
+    }
+
+    function extractSelectAll() {
+      const file = pdfData.find(f => f.id === activeFileId);
+      if(!file) return;
+      for(let i=1; i<=file.pageCount; i++) {
+         const exists = globalExtractList.some(item => item.type === 'page' && item.fileId === activeFileId && item.pageNum === i);
+         if(!exists) {
+             globalExtractList.push({ id: 'ext_'+Date.now()+'_'+i, type: 'page', fileId: activeFileId, pageNum: i });
+         }
+      }
+      extractSelectedIndex = -1;
+      renderPreview();
+      debounceAutoSave();
+    }
+
+    function extractClearAll() {
+      if(!activeFileId) return;
+      globalExtractList = globalExtractList.filter(item => !(item.type === 'page' && item.fileId === activeFileId));
+      extractSelectedIndex = -1;
+      renderPreview();
+      debounceAutoSave();
+    }
+
+    function toggleExtract(page) { 
+      if(!activeFileId) return;
+      
+      const indices = [];
+      globalExtractList.forEach((item, idx) => { if(item.type === 'page' && item.fileId === activeFileId && item.pageNum === page) indices.push(idx); });
+      
+      if (indices.length > 0) {
+        for(let i = indices.length - 1; i >= 0; i--) {
+          globalExtractList.splice(indices[i], 1);
+          if (extractSelectedIndex === indices[i]) extractSelectedIndex = -1;
+          else if (extractSelectedIndex > indices[i]) extractSelectedIndex--;
+        }
+      } else {
+        const newItem = { id: 'ext_'+Date.now(), type: 'page', fileId: activeFileId, pageNum: page };
+        globalExtractList.push(newItem);
+      }
+      
+      renderPreview(); 
+      debounceAutoSave();
+    }
+
+
+    // --- PDF操作関連 ---
+    document.getElementById('file-input').addEventListener('change', async (e) => {
+      const files = e.target.files; if (!files.length) return;
+      showLoading(true, "PDFを解析中...");
+      for (const file of files) {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const pdfJsDoc = await pdfjsLib.getDocument({data: arrayBuffer.slice(0)}).promise;
+          const pageCount = pdfJsDoc.numPages;
+          const fileObj = { id: 'pdf_' + Date.now() + Math.random().toString(36).substr(2, 5), name: file.name, bytes: arrayBuffer, pageCount: pageCount, pdfJsDoc: pdfJsDoc, thumbnails: [], pageRotations: Array(pageCount).fill(0) };
+          for (let i = 1; i <= pageCount; i++) {
+            const page = await pdfJsDoc.getPage(i); const canvas = document.createElement('canvas'); const viewport = page.getViewport({ scale: 0.5 });
+            canvas.width = viewport.width; canvas.height = viewport.height;
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+            fileObj.thumbnails.push(canvas.toDataURL('image/jpeg', 0.7));
+          }
+          pdfData.push(fileObj); if(!activeFileId) activeFileId = fileObj.id;
+        } catch (err) { showModal('エラー', `「${file.name}」の読み込みに失敗しました。`); }
+      }
+      e.target.value = ''; updateFileList(); renderPreview(); showLoading(false);
+      debounceAutoSave();
+    });
+
+    function setActiveFile(id) { activeFileId = id; currentPreviewPage = 1; extractSelectedIndex = -1; updateFileList(); renderPreview(); debounceAutoSave(); }
+    function removeFile(id) { 
+        pdfData = pdfData.filter(f => f.id !== id); 
+        globalExtractList = globalExtractList.filter(item => !(item.type === 'page' && item.fileId === id));
+        if(activeFileId === id) activeFileId = pdfData.length ? pdfData[0].id : null; 
+        extractSelectedIndex = -1; 
+        updateFileList(); 
+        renderPreview(); 
+        debounceAutoSave(); 
+    }
+    function moveMerge(id, dir) {
+      const idx = pdfData.findIndex(f => f.id === id); if(idx < 0) return;
+      if(dir === -1 && idx > 0) [pdfData[idx-1], pdfData[idx]] = [pdfData[idx], pdfData[idx-1]];
+      if(dir === 1 && idx < pdfData.length-1) [pdfData[idx], pdfData[idx+1]] = [pdfData[idx+1], pdfData[idx]];
+      updateFileList();
+      debounceAutoSave();
+    }
+    function updateFileList() {
+      const list = document.getElementById('file-list'); const mergeList = document.getElementById('merge-list');
+      list.innerHTML = ''; mergeList.innerHTML = '';
+      if(!pdfData.length) { list.innerHTML = '<div class="text-gray-400 text-center h-full flex items-center justify-center" style="font-size: 1.2cqw;">ファイルがありません</div>'; return; }
+      pdfData.forEach((f, idx) => {
+        const isActive = f.id === activeFileId;
+        list.innerHTML += `
+          <div onclick="setActiveFile('${f.id}')" class="flex items-center justify-between p-1 rounded cursor-pointer border ${isActive ? 'bg-blue-50 border-blue-300 shadow-sm' : 'bg-white border-gray-200 hover:bg-gray-50'} shrink-0">
+            <div class="flex items-center overflow-hidden gap-1"><img src="${f.thumbnails[0]}" class="border" style="width: 2.5cqw; height: auto;"><div class="flex flex-col overflow-hidden"><span class="truncate font-bold text-gray-700 text-xs">${f.name}</span><span class="text-gray-500" style="font-size: 0.8cqw;">${f.pageCount}P</span></div></div>
+            <button onclick="event.stopPropagation(); removeFile('${f.id}')" class="text-gray-400 hover:text-red-500 px-2">🗑️</button>
+          </div>`;
+        mergeList.innerHTML += `
+          <div class="flex items-center justify-between bg-white border border-gray-200 p-1 rounded">
+            <div class="flex items-center overflow-hidden gap-1"><span class="bg-gray-200 text-gray-700 rounded-full flex items-center justify-center font-bold" style="width:1.5cqw; height:1.5cqw; font-size:1cqw;">${idx+1}</span><img src="${f.thumbnails[0]}" class="border" style="width: 2cqw;"><span class="truncate text-xs font-bold text-gray-700">${f.name}</span></div>
+            <div class="flex gap-1"><button onclick="moveMerge('${f.id}', -1)" class="bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-[0.8cqw]">⬆️</button><button onclick="moveMerge('${f.id}', 1)" class="bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-[0.8cqw]">⬇️</button></div>
+          </div>`;
+      });
+    }
+
+    // --- プレビュー描画 ---
+    async function renderPreview() {
+      syncStateToPanel();
+      const grid = document.getElementById('preview-grid'); const single = document.getElementById('preview-single');
+      const title = document.getElementById('preview-title'); const pagi = document.getElementById('preview-pagination');
+      const file = pdfData.find(f => f.id === activeFileId);
+
+      if(!file) { 
+        grid.classList.add('hidden'); single.classList.add('hidden'); pagi.classList.add('hidden'); 
+        title.textContent = 'プレビュー (ファイル未選択)'; title.title = 'プレビュー (ファイル未選択)'; 
+        renderExtractListUI();
+        return; 
+      }
+      title.textContent = `プレビュー: ${file.name}`;
+      title.title = `プレビュー: ${file.name}`;
+
+      if (currentMode === 'extract') {
+        single.classList.add('hidden'); grid.classList.remove('hidden'); pagi.classList.add('hidden'); grid.innerHTML = '';
+        
+        file.thumbnails.forEach((thumb, i) => {
+          const p = i + 1; 
+          
+          const indices = [];
+          globalExtractList.forEach((item, idx) => { if(item.type === 'page' && item.fileId === activeFileId && item.pageNum === p) indices.push(idx + 1); });
+          const isSel = indices.length > 0;
+          
+          let badgeHtml = '';
+          if (isSel) {
+             badgeHtml = `<div class="absolute top-1 right-1 flex flex-col gap-0.5">`;
+             indices.forEach(num => {
+               badgeHtml += `<div class="bg-blue-500 text-white rounded-full w-[1.5cqw] h-[1.5cqw] flex items-center justify-center text-[0.8cqw] font-bold shadow-sm">${num}</div>`;
+             });
+             badgeHtml += `</div>`;
+          }
+          
+          grid.innerHTML += `
+            <div onclick="toggleExtract(${p})" class="thumb-card relative bg-white flex flex-col items-center p-1 shadow-sm ${isSel ? 'selected' : ''}">
+              <img src="${thumb}" class="w-full border border-gray-200"><span class="mt-1 font-bold text-gray-700 text-xs">${p}</span>
+              ${badgeHtml}
+            </div>`;
+        });
+        
+        renderExtractListUI();
+        
+      } 
+      else if (currentMode === 'merge') {
+        grid.classList.add('hidden'); single.classList.remove('hidden'); pagi.classList.add('hidden');
+        document.getElementById('preview-canvas-container').innerHTML = '<div class="flex flex-col items-center justify-center h-full text-gray-400 p-10"><span style="font-size: 3cqw; margin-bottom: 1cqw;">🔗</span><p>右のパネルで順序を調整してください</p></div>';
+      }
+      else if (currentMode === 'edit') {
+        grid.classList.add('hidden'); single.classList.remove('hidden'); pagi.classList.remove('hidden');
+        document.getElementById('preview-page-text').textContent = `${currentPreviewPage} / ${file.pageCount}`;
+        
+        const page = await file.pdfJsDoc.getPage(currentPreviewPage);
+        const vh = single.clientHeight - 40; // ツールバー分少し余裕を
+        
+        // 回転情報を適用して表示
+        const currentRot = (file.pageRotations && file.pageRotations[currentPreviewPage - 1]) ? file.pageRotations[currentPreviewPage - 1] : 0;
+        const baseViewport = page.getViewport({scale: 1, rotation: page.rotate + currentRot});
+        currentPdfPageScale = vh / baseViewport.height; 
+        
+        const scale = currentPdfPageScale; 
+        const viewport = page.getViewport({ scale: scale, rotation: page.rotate + currentRot });
+
+        const cont = document.getElementById('preview-canvas-container'); cont.innerHTML = ''; 
+        const canvas = document.createElement('canvas'); canvas.id = 'preview-canvas'; canvas.className = 'block';
+        canvas.width = viewport.width * (window.devicePixelRatio || 1); canvas.height = viewport.height * (window.devicePixelRatio || 1);
+        const ctx = canvas.getContext('2d'); ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+        
+        canvas.style.width = `${viewport.width}px`; canvas.style.height = `${viewport.height}px`;
+        cont.style.width = `${viewport.width}px`; cont.style.height = `${viewport.height}px`;
+        baseContainerSize = { w: viewport.width, h: viewport.height };
+        document.getElementById('zoom-wrapper').style.width = `${viewport.width * zoomLevel}px`;
+        document.getElementById('zoom-wrapper').style.height = `${viewport.height * zoomLevel}px`;
+
+        cont.appendChild(canvas);
+        await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+        updatePreviewDecorations(); 
+      }
+    }
+
+    function changePreviewPage(dir) {
+      const file = pdfData.find(f => f.id === activeFileId); if(!file) return;
+      currentPreviewPage += dir;
+      if(currentPreviewPage < 1) currentPreviewPage = 1; if(currentPreviewPage > file.pageCount) currentPreviewPage = file.pageCount;
+      renderPreview();
+    }
+
+    // --- エクスポート / インポート ---
+    function arrayBufferToBase64(buffer) {
+      return new Promise((resolve) => {
+        const blob = new Blob([buffer], {type: 'application/octet-stream'}); const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result.split(',')[1]); reader.readAsDataURL(blob);
+      });
+    }
+    function base64ToArrayBuffer(base64) {
+      const binary_string = window.atob(base64); const len = binary_string.length; const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = binary_string.charCodeAt(i); return bytes.buffer;
+    }
+
+    async function saveProject() {
+      if(!pdfData.length) return showModal('エラー','保存するPDFファイルがありません。');
+      const defaultName = `校務PDFプロジェクト_${getTimestampString()}.json`;
+      const fileName = await promptAsync('プロジェクトの保存名', defaultName);
+      if(!fileName) return;
+
+      showLoading(true, "データを圧縮・保存中...");
+      try {
+        const projData = { version: 9, pdfs: [], globalExtractList: globalExtractList, decorState: decorState };
+        for(const f of pdfData) projData.pdfs.push({ id: f.id, name: f.name, pageCount: f.pageCount, bytesBase64: await arrayBufferToBase64(f.bytes), pageRotations: f.pageRotations || Array(f.pageCount).fill(0) });
+        const blob = new Blob([JSON.stringify(projData)], {type: "application/json"});
+        const url = URL.createObjectURL(blob); const a = document.createElement('a');
+        a.href = url; a.download = fileName.endsWith('.json') ? fileName : fileName + '.json';
+        a.click(); URL.revokeObjectURL(url);
+        showModal('保存完了', '作業データを保存しました。', true);
+      } catch(e) { showModal('エラー', e.message); }
+      showLoading(false);
+    }
+
+    document.getElementById('project-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0]; if(!file) return;
+      showLoading(true, "プロジェクトを復元中...");
+      try {
+        const text = await file.text(); const projData = JSON.parse(text);
+        pdfData = [];
+        for(const f of projData.pdfs) {
+          const bytes = base64ToArrayBuffer(f.bytesBase64);
+          const pdfJsDoc = await pdfjsLib.getDocument({data: bytes.slice(0)}).promise;
+          const thumbnails = [];
+          for (let i = 1; i <= f.pageCount; i++) {
+            const page = await pdfJsDoc.getPage(i); const canvas = document.createElement('canvas'); const viewport = page.getViewport({ scale: 0.5 });
+            canvas.width = viewport.width; canvas.height = viewport.height;
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+            thumbnails.push(canvas.toDataURL('image/jpeg', 0.7));
+          }
+          pdfData.push({ id: f.id, name: f.name, bytes, pageCount: f.pageCount, pdfJsDoc, thumbnails, pageRotations: f.pageRotations || Array(f.pageCount).fill(0) });
+        }
+        
+        globalExtractList = projData.globalExtractList || [];
+        
+        let loadedState = projData.decorState || {};
+        if (loadedState.items === undefined) {
+          decorState = { items: [], drawMode: loadedState.drawMode || 'standard' };
+        } else {
+          decorState = loadedState;
+        }
+
+        activeFileId = pdfData.length ? pdfData[0].id : null;
+        extractSelectedIndex = -1;
+        updateFileList(); 
+        
+        const targetBtn = document.querySelector(`.tab-btn[data-tab="${currentMode}"]`);
+        if(targetBtn) switchTab(targetBtn);
+        else renderPreview();
+
+        initHistory();
+        showModal('復元完了', 'プロジェクトの読み込みに成功しました。', true);
+      } catch(err) { showModal('エラー', 'ファイルが破損しているか、形式が異なります。'); }
+      e.target.value = ''; showLoading(false);
+      debounceAutoSave();
+    });
+
+    // --- PDF書き出し実行 ---
+    function downloadPdf(bytes, name) { const blob = new Blob([bytes], {type: 'application/pdf'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url); }
+    function hexToRgb(hex) { const r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex); return r ? { r: parseInt(r[1], 16)/255, g: parseInt(r[2], 16)/255, b: parseInt(r[3], 16)/255 } : { r:1, g:1, b:1 }; }
+
+    async function executeExtract() {
+      if(!globalExtractList.length) return showModal('エラー','抽出するページを選択するか、仕切りを追加してください。');
+      const fileName = await promptAsync('抽出したPDFの保存名', `抽出_${getTimestampString()}.pdf`);
+      if(!fileName) return;
+
+      showLoading(true, "抽出中...");
+      try { 
+        const newDoc = await PDFDocument.create(); 
+        const loadedDocs = {}; 
+        
+        for (const item of globalExtractList) {
+          if (item.type === 'page') {
+            const file = pdfData.find(f => f.id === item.fileId);
+            if (file) {
+                if (!loadedDocs[file.id]) {
+                    loadedDocs[file.id] = await PDFDocument.load(file.bytes.slice(0));
+                }
+                const srcDoc = loadedDocs[file.id];
+                const [copiedPage] = await newDoc.copyPages(srcDoc, [item.pageNum - 1]);
+                const currentRot = (file.pageRotations && file.pageRotations[item.pageNum - 1]) ? file.pageRotations[item.pageNum - 1] : 0;
+                if (currentRot !== 0) {
+                    copiedPage.setRotation(degrees(copiedPage.getRotation().angle + currentRot));
+                }
+                newDoc.addPage(copiedPage);
+            }
+          } else if (item.type === 'blank') {
+            const page = newDoc.addPage([item.width, item.height]);
+            if (item.color !== '#ffffff') {
+              const c = hexToRgb(item.color);
+              page.drawRectangle({
+                x: 0, y: 0, width: item.width, height: item.height,
+                color: rgb(c.r, c.g, c.b)
+              });
+            }
+          }
+        }
+        
+        downloadPdf(await newDoc.save(), fileName.toLowerCase().endsWith('.pdf') ? fileName : fileName + '.pdf'); 
+        showModal('完了', '保存しました。', true); 
+      } catch (e) { showModal('エラー', e.message); }
+      showLoading(false);
+    }
+
+    async function executeMerge() {
+      if(pdfData.length < 2) return showModal('エラー','2つ以上のファイルが必要です。');
+      const fileName = await promptAsync('結合したPDFの保存名', `結合_${getTimestampString()}.pdf`);
+      if(!fileName) return;
+
+      showLoading(true, "結合中...");
+      try { 
+        const newDoc = await PDFDocument.create(); 
+        for(const f of pdfData) { 
+            const srcDoc = await PDFDocument.load(f.bytes.slice(0)); 
+            const cps = await newDoc.copyPages(srcDoc, srcDoc.getPageIndices()); 
+            cps.forEach((p, i) => {
+                const currentRot = (f.pageRotations && f.pageRotations[i]) ? f.pageRotations[i] : 0;
+                if (currentRot !== 0) {
+                    p.setRotation(degrees(p.getRotation().angle + currentRot));
+                }
+                newDoc.addPage(p);
+            }); 
+        } 
+        downloadPdf(await newDoc.save(), fileName.toLowerCase().endsWith('.pdf') ? fileName : fileName + '.pdf'); 
+        showModal('完了', '保存しました。', true); 
+      } catch (e) { showModal('エラー', e.message); }
+      showLoading(false);
+    }
+
+    async function executeEdit() {
+      const file = pdfData.find(f => f.id === activeFileId); if(!file) return showModal('エラー','ファイルがありません。');
+      if(decorState.items.length === 0) return showModal('エラー','装飾アイテムを追加してください。');
+
+      const baseName = file.name.replace(/\.[^/.]+$/, "");
+      const fileName = await promptAsync('装飾したPDFの保存名', `編集済_${baseName}_${getTimestampString()}.pdf`);
+      if(!fileName) return;
+
+      showLoading(true, "装飾・マスク処理中...");
+      try {
+        const doc = await PDFDocument.load(file.bytes.slice(0));
+        const pages = doc.getPages();
+        const totalPages = pages.length;
+        const helveticaFont = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+        
+        // --- ★重要: 先にすべてのページに回転を適用する ---
+        pages.forEach((page, i) => {
+            const currentRot = (file.pageRotations && file.pageRotations[i]) ? file.pageRotations[i] : 0;
+            if (currentRot !== 0) {
+                page.setRotation(degrees(page.getRotation().angle + currentRot));
+            }
+        });
+        
+        // 画像化アセットの事前準備
+        let embeddedAssets = {};
+        for(const item of decorState.items) {
+          if(item.type === 'image' && item.bytesBase64) {
+            const bytes = base64ToArrayBuffer(item.bytesBase64);
+            embeddedAssets[item.id] = item.mimeType === 'image/png' ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+          } else if ((item.type === 'text' || item.type === 'watermark') && item.val) {
+            const pt = item.size; const font = item.font;
+            const cvs = document.createElement('canvas'); const ctx = cvs.getContext('2d'); const scale = 4;
+            const lines = item.val.split('\n');
+            ctx.font = `bold ${pt * scale}px ${font}`; 
+            let maxWidth = 0;
+            lines.forEach(line => { const w = ctx.measureText(line).width; if(w > maxWidth) maxWidth = w; });
+            cvs.width = maxWidth + 20; cvs.height = (pt * scale * 1.5) * lines.length + 10;
+            ctx.font = `bold ${pt * scale}px ${font}`; ctx.fillStyle = item.color; ctx.textBaseline = 'top';
+            lines.forEach((line, idx) => { ctx.fillText(line, 10, 5 + (pt * scale * 1.5) * idx); });
+            const pngBytes = await fetch(cvs.toDataURL('image/png')).then(r=>r.arrayBuffer());
+            embeddedAssets[item.id] = { img: await doc.embedPng(pngBytes), w: cvs.width / scale, h: cvs.height / scale };
+          }
+        }
+
+        const drawMode = decorState.drawMode || 'standard';
+
+        if (drawMode === 'wysiwyg') {
+          showModal('エラー', '現在、回転と「画面見たまま強制(wysiwyg)」モードの同時使用はサポートされていません。標準モードをご利用ください。');
+          showLoading(false);
+          return;
+        } else {
+          function getPdfDrawCoords(pctX, pctY, cropBox, angle, elemW, elemH) {
+            const W_view = (angle === 90 || angle === 270) ? cropBox.height : cropBox.width;
+            const H_view = (angle === 90 || angle === 270) ? cropBox.width : cropBox.height;
+            const x_view = W_view * (pctX / 100); const y_view = H_view * (pctY / 100);
+
+            let cx, cy, pdf_rot;
+            if (angle === 0) { cx = cropBox.x + x_view; cy = cropBox.y + (cropBox.height - y_view); pdf_rot = 0; } 
+            else if (angle === 90) { cx = cropBox.x + y_view; cy = cropBox.y + x_view; pdf_rot = -90; } 
+            else if (angle === 180) { cx = cropBox.x + (cropBox.width - x_view); cy = cropBox.y + y_view; pdf_rot = 180; } 
+            else if (angle === 270) { cx = cropBox.x + (cropBox.width - y_view); cy = cropBox.y + (cropBox.height - x_view); pdf_rot = 90; }
+
+            const theta = pdf_rot * (Math.PI / 180);
+            const x = cx - (elemW / 2) * Math.cos(theta) + (elemH / 2) * Math.sin(theta);
+            const y = cy - (elemW / 2) * Math.sin(theta) - (elemH / 2) * Math.cos(theta);
+
+            return { x, y, rotate: pdf_rot };
+          }
+
+          const masterCropBox = pages[0].getCropBox();
+          const masterAngle = pages[0].getRotation().angle;
+
+          pages.forEach((page, i) => {
+            const cropBox = (drawMode === 'master') ? masterCropBox : page.getCropBox();
+            const angle = (drawMode === 'master') ? masterAngle : page.getRotation().angle;
+            const W_view = (angle === 90 || angle === 270) ? cropBox.height : cropBox.width;
+            const H_view = (angle === 90 || angle === 270) ? cropBox.width : cropBox.height;
+            const pageIndex1 = i + 1;
+            
+            [...decorState.items].reverse().forEach(item => {
+              if(item.type === 'pagenum') {
+                if (pageIndex1 >= item.startPdfPage) {
+                  const textStr = `- ${pageIndex1 - item.startPdfPage + item.startNum} -`;
+                  const textSize = item.size;
+                  const textWidth = helveticaFont.widthOfTextAtSize(textStr, textSize);
+                  const textHeight = textSize; 
+                  
+                  const coords = getPdfDrawCoords(item.x, item.y, cropBox, angle, textWidth, textHeight);
+                  const offsetY = textHeight * 0.2;
+                  const theta = coords.rotate * (Math.PI / 180);
+                  const drawX = coords.x - offsetY * Math.sin(theta);
+                  const drawY = coords.y + offsetY * Math.cos(theta);
+
+                  page.drawText(textStr, { x: drawX, y: drawY, size: textSize, font: helveticaFont, color: rgb(0,0,0), rotate: degrees(coords.rotate) });
+                }
+              }
+              else if(item.type === 'image' && embeddedAssets[item.id]) {
+                 if (isItemVisible(item, pageIndex1, totalPages)) {
+                   const imgAsset = embeddedAssets[item.id];
+                   const imgW = W_view * (item.size / 100);
+                   const imgH = imgW * (item.origH / item.origW);
+                   const coords = getPdfDrawCoords(item.x, item.y, cropBox, angle, imgW, imgH);
+                   page.drawImage(imgAsset, { x: coords.x, y: coords.y, width: imgW, height: imgH, rotate: degrees(coords.rotate) });
+                 }
+              }
+              else if(item.type === 'text' && embeddedAssets[item.id]) {
+                 if (isItemVisible(item, pageIndex1, totalPages)) {
+                   const txtAsset = embeddedAssets[item.id];
+                   const coords = getPdfDrawCoords(item.x, item.y, cropBox, angle, txtAsset.w, txtAsset.h);
+                   page.drawImage(txtAsset.img, { x: coords.x, y: coords.y, width: txtAsset.w, height: txtAsset.h, rotate: degrees(coords.rotate) });
+                 }
+              }
+              else if(item.type === 'watermark' && embeddedAssets[item.id]) {
+                 if (isItemVisible(item, pageIndex1, totalPages)) {
+                   const txtAsset = embeddedAssets[item.id];
+                   const coords = getPdfDrawCoords(item.x, item.y, cropBox, angle, txtAsset.w, txtAsset.h);
+                   page.drawImage(txtAsset.img, { 
+                       x: coords.x, y: coords.y, 
+                       width: txtAsset.w, height: txtAsset.h, 
+                       rotate: degrees(coords.rotate + item.angle),
+                       opacity: item.opacity
+                   });
+                 }
+              }
+              else if(item.type === 'mask') {
+                if(isItemVisible(item, pageIndex1, totalPages)) {
+                  const rectW = W_view * (item.w / 100);
+                  const rectH = H_view * (item.h / 100);
+                  const coords = getPdfDrawCoords(item.x, item.y, cropBox, angle, rectW, rectH);
+                  const c = hexToRgb(item.color);
+                  page.drawRectangle({ x: coords.x, y: coords.y, width: rectW, height: rectH, color: rgb(c.r, c.g, c.b), rotate: degrees(coords.rotate) });
+                }
+              }
+              else if(item.type === 'rect') {
+                if(isItemVisible(item, pageIndex1, totalPages)) {
+                  const rw = W_view * (item.w / 100);
+                  const rh = H_view * (item.h / 100);
+                  const coords = getPdfDrawCoords(item.x, item.y, cropBox, angle, rw, rh);
+                  const c = hexToRgb(item.color);
+                  page.drawRectangle({ 
+                      x: coords.x, y: coords.y, 
+                      width: rw, height: rh, 
+                      borderColor: rgb(c.r, c.g, c.b),
+                      borderWidth: item.borderWidth,
+                      rotate: degrees(coords.rotate) 
+                  });
+                }
+              }
+              else if(item.type === 'circle') {
+                if(isItemVisible(item, pageIndex1, totalPages)) {
+                  const rw = W_view * (item.w / 100);
+                  const rh = H_view * (item.h / 100);
+                  const coords = getPdfDrawCoords(item.x, item.y, cropBox, angle, rw, rh);
+                  const c = hexToRgb(item.color);
+                  page.drawEllipse({ 
+                      x: coords.x, y: coords.y, 
+                      xScale: rw / 2, yScale: rh / 2,
+                      borderColor: rgb(c.r, c.g, c.b),
+                      borderWidth: item.borderWidth,
+                      rotate: degrees(coords.rotate) 
+                  });
+                }
+              }
+            });
+          });
+          downloadPdf(await doc.save(), fileName.toLowerCase().endsWith('.pdf') ? fileName : fileName + '.pdf');
+        }
+
+        showModal('完了', '保存しました。', true);
+      } catch (e) { showModal('エラー', e.message); }
+      showLoading(false);
+    }
+  </script>
+</body>
+</html>
